@@ -1,0 +1,15 @@
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+# Next.js on Netlify is handled by the OpenNext runtime automatically.
+# Set these site env vars in the Netlify UI (or via CLI):
+#   GOOGLE_SHEETS_SPREADSHEET_ID
+#   GOOGLE_SERVICE_ACCOUNT_EMAIL
+#   GOOGLE_PRIVATE_KEY
+#   NEXT_PUBLIC_APP_URL
+#   SPOTIFY_CLIENT_ID (optional)
+#   SPOTIFY_CLIENT_SECRET (optional)
