@@ -2,7 +2,7 @@
 
 Collaborative Spotify playlist builder for Netlify. A group nominates songs, everyone votes **Love / Okay / Pass**, and anything with zero vetoes becomes the shared playlist.
 
-**Backend:** Google Sheets (no database to provision).
+**Backend:** Google Sheets via **Apps Script** (no Google Cloud project or service account).
 
 ## How it works
 
@@ -15,57 +15,50 @@ Collaborative Spotify playlist builder for Netlify. A group nominates songs, eve
 
 Consensus rule: a song makes the playlist only if nobody voted Pass and at least one person voted.
 
-## Google Sheets setup
+## Google Apps Script setup
 
-1. In [Google Cloud Console](https://console.cloud.google.com/), create a project and enable the **Google Sheets API**
-2. Create a **service account**, download its JSON key
-3. Create a blank [Google Spreadsheet](https://sheets.google.com/)
-4. Share the spreadsheet with the service account email as **Editor**
-5. Copy the spreadsheet ID from the URL (`/d/<ID>/edit`)
-6. Set env vars (see `.env.example`):
+See [`apps-script/README.md`](./apps-script/README.md) for the full walkthrough.
+
+Short version:
+
+1. Create a Google Sheet → **Extensions → Apps Script**
+2. Paste [`apps-script/Code.gs`](./apps-script/Code.gs)
+3. Add script property `APPS_SCRIPT_SECRET`
+4. Deploy as a **Web app** (Execute as: Me, Who has access: Anyone)
+5. Set env vars:
 
 | Variable | Purpose |
 |---|---|
-| `GOOGLE_SHEETS_SPREADSHEET_ID` | Spreadsheet ID |
-| `GOOGLE_SERVICE_ACCOUNT_EMAIL` | Service account email |
-| `GOOGLE_PRIVATE_KEY` | Private key (keep `\n` escapes) |
+| `GOOGLE_APPS_SCRIPT_URL` | Deployed Apps Script web app URL |
+| `GOOGLE_APPS_SCRIPT_SECRET` | Same secret as the script property |
 | `NEXT_PUBLIC_APP_URL` | Public site URL |
 | `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` | Optional live Spotify search + export |
 
-On first write, Okaylist creates four tabs automatically: `Rooms`, `Participants`, `Songs`, `Votes`.
-
-Without Sheets credentials the app falls back to **in-memory storage** (fine for local solo testing; data is lost on restart and not shared across Netlify instances).
+Without Apps Script credentials the app falls back to **in-memory storage** (fine for local solo testing; not shared across Netlify instances).
 
 ## Local development
 
 ```bash
 npm install
 cp .env.example .env.local
-# fill Google Sheets + optional Spotify vars
+# fill Apps Script + optional Spotify vars
 npm run dev
 ```
 
 ## Netlify deploy
 
 ```bash
-# one-time
 npx netlify login
 npx netlify init
 
-# set env vars in Netlify UI, or:
-npx netlify env:set GOOGLE_SHEETS_SPREADSHEET_ID "..."
-npx netlify env:set GOOGLE_SERVICE_ACCOUNT_EMAIL "..."
-npx netlify env:set GOOGLE_PRIVATE_KEY "-----BEGIN PRIVATE KEY-----\n..."
+npx netlify env:set GOOGLE_APPS_SCRIPT_URL "https://script.google.com/macros/s/.../exec"
+npx netlify env:set GOOGLE_APPS_SCRIPT_SECRET "your-secret"
 npx netlify env:set NEXT_PUBLIC_APP_URL "https://your-site.netlify.app"
 
 npx netlify deploy --build --prod
 ```
 
-`netlify.toml` builds with `npm run build` and publishes `.next`. The Next.js runtime on Netlify turns API routes into serverless functions.
-
 ### Spotify redirect (optional)
-
-In the Spotify Developer Dashboard, add:
 
 ```
 https://your-site.netlify.app/api/spotify/export
