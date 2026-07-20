@@ -9,7 +9,7 @@ export type RoomStateResponse = {
     phase: RoomPhase;
     spotifyPlaylistUrl: string | null;
     createdAt: string;
-    storage?: "sheets" | "memory";
+    storage?: "database" | "memory";
   };
   participants: {
     id: string;

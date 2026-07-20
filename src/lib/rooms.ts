@@ -10,10 +10,10 @@ import {
   listRooms,
   listSongs,
   listVotes,
-  sheetsConfigured,
+  storeConfigured,
   updateRoom,
   upsertVote,
-} from "./sheets";
+} from "./store";
 
 function newId() {
   return crypto.randomUUID();
@@ -53,8 +53,8 @@ export async function createRoom(name: string, hostName: string) {
 }
 
 export async function getRoomByCode(code: string): Promise<Room | null> {
-  const rooms = await listRooms();
-  return rooms.find((r) => r.code === code.toUpperCase()) ?? null;
+  const all = await listRooms();
+  return all.find((r) => r.code === code.toUpperCase()) ?? null;
 }
 
 export async function joinRoom(code: string, name: string) {
@@ -139,7 +139,7 @@ export async function loadRoom(
       phase: room.phase,
       spotifyPlaylistUrl: room.spotifyPlaylistUrl,
       createdAt: room.createdAt,
-      storage: sheetsConfigured() ? ("sheets" as const) : ("memory" as const),
+      storage: storeConfigured() ? ("database" as const) : ("memory" as const),
     },
     participants: memberList.map((m) => ({
       id: m.id,
@@ -243,8 +243,8 @@ export async function removeSong(options: {
     return { error: "Join the room first" as const };
   }
 
-  const songs = await listSongs(room.id);
-  const song = songs.find((s) => s.id === options.songId);
+  const songList = await listSongs(room.id);
+  const song = songList.find((s) => s.id === options.songId);
   if (!song) return { error: "Song not found" as const };
   if (!isHost && song.nominatedBy !== participant.id) {
     return { error: "You can only remove songs you added" as const };
@@ -269,8 +269,8 @@ export async function castVote(options: {
     return { error: "Join the room first" as const };
   }
 
-  const songs = await listSongs(room.id);
-  if (!songs.some((s) => s.id === options.songId)) {
+  const songList = await listSongs(room.id);
+  if (!songList.some((s) => s.id === options.songId)) {
     return { error: "Song not found" as const };
   }
 

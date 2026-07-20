@@ -355,8 +355,8 @@ export function RoomClient({ code }: { code: string }) {
 
       {state.room.storage === "memory" ? (
         <p className="mt-4 rounded-2xl border border-amber/30 bg-amber/10 px-4 py-3 text-sm text-amber">
-          Running on temporary memory storage. Deploy the Apps Script backend
-          (see apps-script/README.md) for Netlify / multi-device rooms.
+          Running on temporary memory storage. Deploy to Netlify to get a free
+          Postgres database automatically — rooms will persist for everyone.
         </p>
       ) : null}
 
