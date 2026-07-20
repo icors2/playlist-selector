@@ -7,6 +7,7 @@ export type RoomStateResponse = {
     code: string;
     name: string;
     phase: RoomPhase;
+    spotifyPlaylistId: string | null;
     spotifyPlaylistUrl: string | null;
     createdAt: string;
     storage?: "database" | "memory";

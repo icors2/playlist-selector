@@ -112,6 +112,8 @@ export async function GET(request: Request) {
       name: roomState.room.name,
       description: `Built with Okaylist — songs everyone was okay with. Room ${roomState.room.code}.`,
       trackIds: consensus.playlist.map((s) => s.spotifyTrackId),
+      // Rewrite the group's existing playlist when one was imported.
+      existingPlaylistId: roomState.room.spotifyPlaylistId,
     });
 
     if (!playlist) {

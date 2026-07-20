@@ -7,11 +7,15 @@ import {
   storeParticipantToken,
 } from "@/lib/session";
 
+const DEFAULT_GROUP_PLAYLIST =
+  "https://open.spotify.com/playlist/7m0QVuZ9Nj8zZ6jFQO8FX3";
+
 export function HomeClient() {
   const router = useRouter();
   const [mode, setMode] = useState<"create" | "join">("create");
-  const [roomName, setRoomName] = useState("Friday hang");
+  const [roomName, setRoomName] = useState("Group playlist");
   const [hostName, setHostName] = useState("");
+  const [playlistUrl, setPlaylistUrl] = useState(DEFAULT_GROUP_PLAYLIST);
   const [joinCode, setJoinCode] = useState("");
   const [joinName, setJoinName] = useState("");
   const [loading, setLoading] = useState(false);
@@ -35,6 +39,30 @@ export function HomeClient() {
       if (!res.ok) throw new Error(data.error || "Could not create room");
       storeParticipantToken(data.code, data.participantToken);
       storeHostToken(data.code, data.hostToken);
+
+      if (playlistUrl.trim()) {
+        const importRes = await fetch("/api/spotify/import", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-participant-token": data.participantToken,
+            "x-host-token": data.hostToken,
+          },
+          body: JSON.stringify({
+            code: data.code,
+            playlistUrl: playlistUrl.trim(),
+          }),
+        });
+        const importData = await importRes.json();
+        if (!importRes.ok) {
+          // Room still exists — host can retry import inside the room.
+          sessionStorage.setItem(
+            `okaylist_import_error:${data.code}`,
+            importData.error || "Playlist import failed",
+          );
+        }
+      }
+
       router.push(`/room/${data.code}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
@@ -129,7 +157,7 @@ export function HomeClient() {
                   />
                 </label>
                 <label className="grid gap-1.5 text-sm text-paper-dim">
-                  Playlist name
+                  Room name
                   <input
                     className="field"
                     value={roomName}
@@ -139,6 +167,21 @@ export function HomeClient() {
                     maxLength={80}
                   />
                 </label>
+                <label className="grid gap-1.5 text-sm text-paper-dim">
+                  Spotify playlist to seed (optional)
+                  <input
+                    className="field text-sm"
+                    value={playlistUrl}
+                    onChange={(e) => setPlaylistUrl(e.target.value)}
+                    placeholder="https://open.spotify.com/playlist/…"
+                    inputMode="url"
+                  />
+                </label>
+                <p className="text-xs text-paper-dim">
+                  Needs free Spotify API keys on Netlify to import. Songs are
+                  nominated for voting; the final list can write back to this
+                  playlist.
+                </p>
                 <button className="btn-primary mt-2" disabled={loading}>
                   {loading ? "Opening room…" : "Create room"}
                 </button>

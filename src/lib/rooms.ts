@@ -23,7 +23,14 @@ function now() {
   return new Date().toISOString();
 }
 
-export async function createRoom(name: string, hostName: string) {
+export async function createRoom(
+  name: string,
+  hostName: string,
+  options?: {
+    spotifyPlaylistId?: string | null;
+    spotifyPlaylistUrl?: string | null;
+  },
+) {
   const code = createRoomCode();
   const hostToken = createToken();
   const participantToken = createToken();
@@ -36,8 +43,8 @@ export async function createRoom(name: string, hostName: string) {
     name: name.trim() || "Group playlist",
     hostToken,
     phase: "lobby",
-    spotifyPlaylistId: null,
-    spotifyPlaylistUrl: null,
+    spotifyPlaylistId: options?.spotifyPlaylistId ?? null,
+    spotifyPlaylistUrl: options?.spotifyPlaylistUrl ?? null,
     createdAt,
   });
 
@@ -137,6 +144,7 @@ export async function loadRoom(
       code: room.code,
       name: room.name,
       phase: room.phase,
+      spotifyPlaylistId: room.spotifyPlaylistId,
       spotifyPlaylistUrl: room.spotifyPlaylistUrl,
       createdAt: room.createdAt,
       storage: storeConfigured() ? ("database" as const) : ("memory" as const),
@@ -223,6 +231,83 @@ export async function nominateSong(options: {
   });
 
   return { song };
+}
+
+export async function importPlaylistTracks(options: {
+  code: string;
+  hostToken: string;
+  participantToken: string;
+  playlist: {
+    id: string;
+    url: string;
+    name: string;
+    tracks: {
+      id: string;
+      name: string;
+      artists: string;
+      albumArt: string | null;
+      previewUrl: string | null;
+      durationMs: number;
+    }[];
+  };
+}) {
+  const room = await getRoomByCode(options.code);
+  if (!room) return { error: "Room not found" as const };
+  if (room.hostToken !== options.hostToken) {
+    return { error: "Only the host can import a playlist" as const };
+  }
+  if (room.phase !== "lobby" && room.phase !== "nominate") {
+    return {
+      error: "Playlists can only be imported before voting starts" as const,
+    };
+  }
+
+  const participant = await getParticipantByToken(options.participantToken);
+  if (!participant || participant.roomId !== room.id) {
+    return { error: "Join the room first" as const };
+  }
+
+  await updateRoom({
+    ...room,
+    name: room.name === "Group playlist" ? options.playlist.name : room.name,
+    spotifyPlaylistId: options.playlist.id,
+    spotifyPlaylistUrl: options.playlist.url,
+    phase: room.phase === "lobby" ? "nominate" : room.phase,
+  });
+
+  const existing = await listSongs(room.id);
+  const existingIds = new Set(existing.map((s) => s.spotifyTrackId));
+  let added = 0;
+  let skipped = 0;
+
+  for (const track of options.playlist.tracks) {
+    if (existingIds.has(track.id)) {
+      skipped += 1;
+      continue;
+    }
+    await insertSong({
+      id: newId(),
+      roomId: room.id,
+      spotifyTrackId: track.id,
+      name: track.name,
+      artists: track.artists,
+      albumArt: track.albumArt,
+      previewUrl: track.previewUrl,
+      durationMs: track.durationMs,
+      nominatedBy: participant.id,
+      createdAt: now(),
+    });
+    existingIds.add(track.id);
+    added += 1;
+  }
+
+  return {
+    added,
+    skipped,
+    total: options.playlist.tracks.length,
+    playlistName: options.playlist.name,
+    playlistUrl: options.playlist.url,
+  };
 }
 
 export async function removeSong(options: {

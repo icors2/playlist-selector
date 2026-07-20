@@ -43,6 +43,11 @@ export function RoomClient({ code }: { code: string }) {
   const [copied, setCopied] = useState(false);
   const [joinName, setJoinName] = useState("");
   const [joinError, setJoinError] = useState<string | null>(null);
+  const [playlistUrl, setPlaylistUrl] = useState(
+    "https://open.spotify.com/playlist/7m0QVuZ9Nj8zZ6jFQO8FX3",
+  );
+  const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [spotifyReady, setSpotifyReady] = useState<boolean | null>(null);
 
   const refresh = useCallback(async () => {
     const res = await fetch(`/api/rooms/${roomCode}`, {
@@ -63,7 +68,17 @@ export function RoomClient({ code }: { code: string }) {
     let alive = true;
     async function boot() {
       try {
+        const pending = sessionStorage.getItem(
+          `okaylist_import_error:${roomCode}`,
+        );
+        if (pending) {
+          setError(pending);
+          sessionStorage.removeItem(`okaylist_import_error:${roomCode}`);
+        }
         await refresh();
+        const statusRes = await fetch("/api/spotify/status");
+        const status = await statusRes.json();
+        if (alive) setSpotifyReady(Boolean(status.configured));
       } catch (err) {
         if (alive) {
           setError(err instanceof Error ? err.message : "Failed to load room");
@@ -79,7 +94,7 @@ export function RoomClient({ code }: { code: string }) {
       alive = false;
       window.clearInterval(id);
     };
-  }, [refresh]);
+  }, [refresh, roomCode]);
 
   useEffect(() => {
     if (!state || state.room.phase !== "nominate") return;
@@ -197,6 +212,35 @@ export function RoomClient({ code }: { code: string }) {
       window.location.href = data.url;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Export failed");
+      setBusy(false);
+    }
+  }
+
+  async function importPlaylist(e?: FormEvent) {
+    e?.preventDefault();
+    setBusy(true);
+    setImportMessage(null);
+    setError(null);
+    try {
+      const res = await fetch("/api/spotify/import", {
+        method: "POST",
+        headers: authHeaders(roomCode),
+        body: JSON.stringify({
+          code: roomCode,
+          playlistUrl: playlistUrl.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Import failed");
+      setImportMessage(
+        `Imported ${data.added} songs` +
+          (data.skipped ? ` (${data.skipped} already on the list)` : "") +
+          ` from “${data.playlistName}”.`,
+      );
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Import failed");
+    } finally {
       setBusy(false);
     }
   }
@@ -378,17 +422,57 @@ export function RoomClient({ code }: { code: string }) {
         <section className="panel mt-10 p-6 sm:p-8 animate-rise-delay-2">
           <h2 className="font-display text-2xl font-bold">Waiting room</h2>
           <p className="mt-2 max-w-xl text-paper-dim">
-            Share the code with your group. When everyone is in, the host opens
-            nominations. Songs with zero vetoes make the final playlist.
+            Share the code with your group. Import your Spotify playlist to seed
+            nominations, then vote — songs with zero vetoes stay.
           </p>
           <p className="mt-6 font-display text-5xl tracking-[0.25em] text-amber">
             {roomCode}
           </p>
-          {!hasHostToken && !state.isHost ? (
+
+          {state.isHost ? (
+            <form className="mt-8 grid gap-3" onSubmit={importPlaylist}>
+              <label className="grid gap-1.5 text-sm text-paper-dim">
+                Seed from Spotify playlist
+                <input
+                  className="field text-sm"
+                  value={playlistUrl}
+                  onChange={(e) => setPlaylistUrl(e.target.value)}
+                  placeholder="https://open.spotify.com/playlist/…"
+                  inputMode="url"
+                />
+              </label>
+              {spotifyReady === false ? (
+                <p className="text-xs text-amber">
+                  Add SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET on Netlify
+                  first (free Spotify Developer app).
+                </p>
+              ) : null}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  disabled={busy || !playlistUrl.trim()}
+                >
+                  {busy ? "Importing…" : "Import playlist & start"}
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  disabled={busy}
+                  onClick={() => setPhase("nominate")}
+                >
+                  Skip — nominate manually
+                </button>
+              </div>
+              {importMessage ? (
+                <p className="text-sm text-foam">{importMessage}</p>
+              ) : null}
+            </form>
+          ) : (
             <p className="mt-4 text-sm text-paper-dim">
-              Waiting for the host to start nominations…
+              Waiting for the host to import a playlist or start nominations…
             </p>
-          ) : null}
+          )}
         </section>
       ) : null}
 
@@ -399,6 +483,49 @@ export function RoomClient({ code }: { code: string }) {
             <p className="mt-1 text-sm text-paper-dim">
               Add tracks you want on the playlist. Anyone can veto later.
             </p>
+
+            {state.isHost ? (
+              <form
+                className="mt-4 grid gap-2 border-b border-[var(--line)] pb-4"
+                onSubmit={importPlaylist}
+              >
+                <label className="grid gap-1.5 text-sm text-paper-dim">
+                  Import / refresh from Spotify playlist
+                  <input
+                    className="field text-sm"
+                    value={playlistUrl}
+                    onChange={(e) => setPlaylistUrl(e.target.value)}
+                    placeholder="https://open.spotify.com/playlist/…"
+                    inputMode="url"
+                  />
+                </label>
+                <button
+                  type="submit"
+                  className="btn-ghost justify-self-start px-4 py-2 text-sm"
+                  disabled={busy || !playlistUrl.trim()}
+                >
+                  {busy ? "Importing…" : "Import songs"}
+                </button>
+                {importMessage ? (
+                  <p className="text-sm text-foam">{importMessage}</p>
+                ) : null}
+                {state.room.spotifyPlaylistUrl ? (
+                  <p className="text-xs text-paper-dim">
+                    Linked playlist:{" "}
+                    <a
+                      className="text-amber underline"
+                      href={state.room.spotifyPlaylistUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      open in Spotify
+                    </a>
+                    . Export will update this list.
+                  </p>
+                ) : null}
+              </form>
+            ) : null}
+
             <input
               className="field mt-4"
               value={query}
@@ -586,32 +713,38 @@ export function RoomClient({ code }: { code: string }) {
                 <p className="mt-2 max-w-xl text-paper-dim">
                   {state.consensus.playlist.length} songs made it — zero vetoes
                   from the group.
+                  {state.room.spotifyPlaylistId
+                    ? " Export will update your linked Spotify playlist."
+                    : ""}
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
                 {state.room.spotifyPlaylistUrl ? (
                   <a
-                    className="btn-primary"
+                    className="btn-ghost"
                     href={state.room.spotifyPlaylistUrl}
                     target="_blank"
                     rel="noreferrer"
                   >
                     Open in Spotify
                   </a>
-                ) : state.isHost ? (
+                ) : null}
+                {state.isHost ? (
                   <button
                     type="button"
                     className="btn-primary"
                     disabled={busy || state.consensus.playlist.length === 0}
                     onClick={exportPlaylist}
                   >
-                    Export to Spotify
+                    {state.room.spotifyPlaylistId
+                      ? "Update Spotify playlist"
+                      : "Export to Spotify"}
                   </button>
-                ) : (
+                ) : !state.room.spotifyPlaylistUrl ? (
                   <p className="text-sm text-paper-dim">
                     Waiting for host to export…
                   </p>
-                )}
+                ) : null}
               </div>
             </div>
 

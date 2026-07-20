@@ -6,7 +6,7 @@
   NODE_VERSION = "22"
 
 # @netlify/database auto-provisions free Postgres on deploy.
-# Optional env vars in the Netlify UI:
-#   NEXT_PUBLIC_APP_URL
-#   SPOTIFY_CLIENT_ID
+# Env vars in the Netlify UI:
+#   NEXT_PUBLIC_APP_URL          (your https://….netlify.app URL)
+#   SPOTIFY_CLIENT_ID            (required for playlist import/export)
 #   SPOTIFY_CLIENT_SECRET
