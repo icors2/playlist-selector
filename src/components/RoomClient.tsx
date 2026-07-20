@@ -43,9 +43,7 @@ export function RoomClient({ code }: { code: string }) {
   const [copied, setCopied] = useState(false);
   const [joinName, setJoinName] = useState("");
   const [joinError, setJoinError] = useState<string | null>(null);
-  const [playlistUrl, setPlaylistUrl] = useState(
-    "https://open.spotify.com/playlist/7m0QVuZ9Nj8zZ6jFQO8FX3",
-  );
+  const [playlistUrl, setPlaylistUrl] = useState("");
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [spotifyReady, setSpotifyReady] = useState<boolean | null>(null);
 

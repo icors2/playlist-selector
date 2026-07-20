@@ -25,10 +25,13 @@ Your playlist must be **public** for import (or you’ll see a “not found” e
 
 ## How a session works
 
-1. Host creates a room (your group playlist URL is prefilled)
-2. Songs import as nominations
-3. Everyone votes — **Pass** = veto
-4. Host updates the same Spotify playlist with the consensus tracks
+1. Deploy to Netlify first (so you have a site URL for Spotify’s redirect)
+2. Create a Spotify Developer app with redirect  
+   `https://YOUR-SITE.netlify.app/api/spotify/export`
+3. Host creates a room and pastes a Spotify playlist they can edit
+4. Songs import as nominations → vote → host updates that playlist
+
+Tip: create your own playlist in Spotify (even empty) and use that link so you’re the owner.
 
 ## Deploy on Netlify (phone-friendly)
 

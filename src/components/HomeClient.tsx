@@ -7,15 +7,12 @@ import {
   storeParticipantToken,
 } from "@/lib/session";
 
-const DEFAULT_GROUP_PLAYLIST =
-  "https://open.spotify.com/playlist/7m0QVuZ9Nj8zZ6jFQO8FX3";
-
 export function HomeClient() {
   const router = useRouter();
   const [mode, setMode] = useState<"create" | "join">("create");
   const [roomName, setRoomName] = useState("Group playlist");
   const [hostName, setHostName] = useState("");
-  const [playlistUrl, setPlaylistUrl] = useState(DEFAULT_GROUP_PLAYLIST);
+  const [playlistUrl, setPlaylistUrl] = useState("");
   const [joinCode, setJoinCode] = useState("");
   const [joinName, setJoinName] = useState("");
   const [loading, setLoading] = useState(false);
