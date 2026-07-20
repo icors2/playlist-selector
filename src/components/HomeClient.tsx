@@ -12,7 +12,9 @@ export function HomeClient() {
   const [mode, setMode] = useState<"create" | "join">("create");
   const [roomName, setRoomName] = useState("Group playlist");
   const [hostName, setHostName] = useState("");
-  const [playlistUrl, setPlaylistUrl] = useState("");
+  const [playlistUrl, setPlaylistUrl] = useState(
+    "https://open.spotify.com/playlist/7wAOTTNJOMAGLNPq537v5a",
+  );
   const [joinCode, setJoinCode] = useState("");
   const [joinName, setJoinName] = useState("");
   const [loading, setLoading] = useState(false);
