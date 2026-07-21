@@ -15,9 +15,9 @@ const sourceSans = Source_Sans_3({
 });
 
 export const metadata: Metadata = {
-  title: "Okaylist — playlists everyone is okay with",
+  title: "Okaylist — group playlist voting",
   description:
-    "Nominate songs, veto the ones that don’t work, and export a Spotify playlist your whole group can live with.",
+    "Nominate songs by hand, vote as a group, and keep tracks that hit 80% approval — then add them to Spotify yourself.",
 };
 
 export default function RootLayout({

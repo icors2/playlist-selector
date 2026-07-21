@@ -5,12 +5,13 @@ import { nominateSong, removeSong } from "@/lib/rooms";
 type Params = { params: Promise<{ code: string }> };
 
 const nominateSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1),
-  artists: z.string().min(1),
+  // Optional — omitted for manual entries (title + artist typed by users)
+  id: z.string().min(1).optional(),
+  name: z.string().min(1).max(200),
+  artists: z.string().min(1).max(200),
   albumArt: z.string().nullable().optional(),
   previewUrl: z.string().nullable().optional(),
-  durationMs: z.number().int().nonnegative(),
+  durationMs: z.number().int().nonnegative().optional(),
 });
 
 export async function POST(request: Request, { params }: Params) {
@@ -31,7 +32,7 @@ export async function POST(request: Request, { params }: Params) {
         artists: track.artists,
         albumArt: track.albumArt ?? null,
         previewUrl: track.previewUrl ?? null,
-        durationMs: track.durationMs,
+        durationMs: track.durationMs ?? 0,
       },
     });
 

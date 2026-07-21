@@ -189,11 +189,17 @@ export async function setPhase(
   return { room: updated };
 }
 
+function manualTrackId(name: string, artists: string) {
+  const key = `${name.trim().toLowerCase()}::${artists.trim().toLowerCase()}`;
+  // Stable id so re-adding the same typed song hits the duplicate check.
+  return `manual:${Buffer.from(key).toString("base64url").slice(0, 48)}`;
+}
+
 export async function nominateSong(options: {
   code: string;
   participantToken: string;
   track: {
-    id: string;
+    id?: string;
     name: string;
     artists: string;
     albumArt: string | null;
@@ -212,17 +218,33 @@ export async function nominateSong(options: {
     return { error: "Join the room first" as const };
   }
 
+  const name = options.track.name.trim();
+  const artists = options.track.artists.trim();
+  if (!name || !artists) {
+    return { error: "Song title and artist are required" as const };
+  }
+
+  const trackId =
+    options.track.id?.trim() || manualTrackId(name, artists);
+
   const existing = await listSongs(room.id);
-  if (existing.some((s) => s.spotifyTrackId === options.track.id)) {
+  if (
+    existing.some(
+      (s) =>
+        s.spotifyTrackId === trackId ||
+        (s.name.toLowerCase() === name.toLowerCase() &&
+          s.artists.toLowerCase() === artists.toLowerCase()),
+    )
+  ) {
     return { error: "That song is already on the list" as const };
   }
 
   const song = await insertSong({
     id: newId(),
     roomId: room.id,
-    spotifyTrackId: options.track.id,
-    name: options.track.name,
-    artists: options.track.artists,
+    spotifyTrackId: trackId,
+    name,
+    artists,
     albumArt: options.track.albumArt,
     previewUrl: options.track.previewUrl,
     durationMs: options.track.durationMs,

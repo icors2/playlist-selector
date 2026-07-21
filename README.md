@@ -1,56 +1,38 @@
-# Okaylist
+# Okaylist (manual playlist)
 
-Collaborative Spotify playlist builder. Import your group’s playlist, vote **Love / Okay / Pass**, and write the survivors back to Spotify.
+Collaborative playlist voting **without Spotify Premium or a Spotify API**.
 
-**Backend:** free Netlify Database (Postgres) — persists across uses.  
-**Songs:** pulled from a Spotify playlist URL (and/or search), not from genres.
+1. Create a room and share the code  
+2. Everyone **types song titles + artists** to nominate  
+3. Vote **Love / Okay / Pass**  
+4. Songs with **80% of the group** approving (Love or Okay) make the list  
+5. **Copy the winning list** and add those tracks to Spotify yourself  
 
-## Do I need a Spotify API?
+## Voting rule
 
-**Yes, for real playlists.** It’s free:
+With `N` people in the room, a song needs `ceil(N × 0.8)` Love/Okay votes.
 
-1. Open [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) (Spotify login)
-2. **Create app** → any name
-3. Copy **Client ID** and **Client Secret**
-4. Edit Settings → **Redirect URIs** → add:
-   `https://YOUR-SITE.netlify.app/api/spotify/export`
-5. On Netlify → Site settings → Environment variables:
-   - `SPOTIFY_CLIENT_ID`
-   - `SPOTIFY_CLIENT_SECRET`
-   - `NEXT_PUBLIC_APP_URL` = `https://YOUR-SITE.netlify.app`
+| Group size | Approvals needed |
+|---|---|
+| 3 | 3 |
+| 4 | 4 |
+| 5 | 4 |
+| 10 | 8 |
 
-Without those keys the app still runs (demo song catalog + voting), but it **cannot** import or update your real Spotify playlist.
+## Deploy on Netlify
 
-Your playlist must be **public** for import (or you’ll see a “not found” error). The person who clicks **Update Spotify playlist** must be able to edit that playlist (owner/collaborator).
+1. Import this branch/repo on [app.netlify.com](https://app.netlify.com)  
+2. Deploy — `@netlify/database` provisions free Postgres automatically  
 
-## How a session works
+No Spotify env vars required for the manual flow.
 
-1. Deploy to Netlify first (so you have a site URL for Spotify’s redirect)
-2. Create a Spotify Developer app with redirect  
-   `https://YOUR-SITE.netlify.app/api/spotify/export`
-3. Host creates a room and pastes a Spotify playlist they can edit
-4. Songs import as nominations → vote → host updates that playlist
-
-Tip: create your own playlist in Spotify (even empty) and use that link so you’re the owner.
-
-## Deploy on Netlify (phone-friendly)
-
-1. [app.netlify.com](https://app.netlify.com) → Add site → Import from GitHub
-2. Deploy (database is created automatically)
-3. Add the Spotify env vars above
-4. Redeploy once so the keys are live
+Optional (if you later add Spotify keys): live search still works as an extra nominate option.
 
 ## Local development
 
 ```bash
 npm install
 cp .env.example .env.local
-# optional: DATABASE_URL, SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
+# optional: DATABASE_URL=postgres://...
 npm run dev
 ```
-
-## Scripts
-
-- `npm run dev` — local development
-- `npm run build` — production build
-- `npm run db:generate` — new Drizzle migration after schema edits

@@ -41,6 +41,8 @@ export type RoomStateResponse = {
     vetoed: ConsensusSong[];
     pending: ConsensusSong[];
     all: ConsensusSong[];
+    threshold?: number;
+    requiredApprovals?: number;
   };
 };
 

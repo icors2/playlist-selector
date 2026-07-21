@@ -1,5 +1,8 @@
 import type { Song, Vote, VoteValue } from "./models";
 
+/** Songs need this share of the room to approve (Love or Okay). */
+export const APPROVAL_THRESHOLD = 0.8;
+
 export type SongWithVotes = Song & {
   votes: Vote[];
   nominatedByName: string | null;
@@ -10,10 +13,18 @@ export type ConsensusSong = SongWithVotes & {
   okayCount: number;
   passCount: number;
   voteCount: number;
+  approveCount: number;
+  approvalRatio: number;
+  requiredApprovals: number;
   score: number;
   inPlaylist: boolean;
   pendingVoters: number;
 };
+
+export function requiredApprovalsFor(participantCount: number) {
+  const n = Math.max(1, participantCount);
+  return Math.ceil(n * APPROVAL_THRESHOLD);
+}
 
 export function summarizeSong(
   song: SongWithVotes,
@@ -30,9 +41,13 @@ export function summarizeSong(
   }
 
   const voteCount = song.votes.length;
+  const approveCount = loveCount + okayCount;
   const pendingVoters = Math.max(0, participantCount - voteCount);
-  // Everyone is "okay" when there are zero vetoes and at least one vote.
-  const inPlaylist = passCount === 0 && voteCount > 0;
+  const requiredApprovals = requiredApprovalsFor(participantCount);
+  const groupSize = Math.max(1, participantCount);
+  const approvalRatio = approveCount / groupSize;
+  // 80% of the whole group must approve (Love or Okay).
+  const inPlaylist = approveCount >= requiredApprovals;
   const score = loveCount * 2 + okayCount - passCount * 3;
 
   return {
@@ -41,6 +56,9 @@ export function summarizeSong(
     okayCount,
     passCount,
     voteCount,
+    approveCount,
+    approvalRatio,
+    requiredApprovals,
     score,
     inPlaylist,
     pendingVoters,
@@ -59,15 +77,20 @@ export function buildConsensus(
     .filter((s) => s.inPlaylist)
     .sort((a, b) => b.score - a.score || b.loveCount - a.loveCount);
 
-  const vetoed = summarized
-    .filter((s) => s.passCount > 0)
-    .sort((a, b) => b.passCount - a.passCount);
+  const rejected = summarized
+    .filter((s) => !s.inPlaylist && s.voteCount > 0)
+    .sort((a, b) => b.approvalRatio - a.approvalRatio);
 
-  const pending = summarized.filter(
-    (s) => s.passCount === 0 && s.voteCount === 0,
-  );
+  const pending = summarized.filter((s) => s.voteCount === 0);
 
-  return { playlist, vetoed, pending, all: summarized };
+  return {
+    playlist,
+    vetoed: rejected,
+    pending,
+    all: summarized,
+    threshold: APPROVAL_THRESHOLD,
+    requiredApprovals: requiredApprovalsFor(participantCount),
+  };
 }
 
 export function myVote(
@@ -76,4 +99,8 @@ export function myVote(
 ): VoteValue | null {
   if (!participantId) return null;
   return song.votes.find((v) => v.participantId === participantId)?.value ?? null;
+}
+
+export function formatApproval(song: ConsensusSong) {
+  return `${song.approveCount}/${song.requiredApprovals} approvals`;
 }
