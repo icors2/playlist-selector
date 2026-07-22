@@ -1,9 +1,6 @@
-# Okaylist — Render Blueprint
+# Okaylist — Render Blueprint (free tier)
 # Dashboard: New → Blueprint → connect this repo / branch
 # Docs: https://render.com/docs/blueprint-spec
-
-previews:
-  generation: automatic
 
 databases:
   - name: okaylist-db
@@ -32,5 +29,3 @@ services:
         fromDatabase:
           name: okaylist-db
           property: connectionString
-      - key: NEXT_PUBLIC_APP_URL
-        sync: false
