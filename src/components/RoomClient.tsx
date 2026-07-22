@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { fetchJson } from "@/lib/api";
 import { formatApproval, myVote } from "@/lib/consensus";
 import { authHeaders } from "@/lib/session";
 import type { CatalogTrack } from "@/lib/catalog-data";
@@ -53,15 +54,16 @@ export function RoomClient({ code }: { code: string }) {
   const [searching, setSearching] = useState(false);
 
   const refresh = useCallback(async () => {
-    const res = await fetch(`/api/rooms/${roomCode}`, {
-      headers: authHeaders(roomCode),
-      cache: "no-store",
-    });
+    const { res, data } = await fetchJson<RoomStateResponse & { error?: string }>(
+      `/api/rooms/${roomCode}`,
+      {
+        headers: authHeaders(roomCode),
+        cache: "no-store",
+      },
+    );
     if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
       throw new Error(data.error || "Room not found");
     }
-    const data = (await res.json()) as RoomStateResponse;
     setState(data);
     setLoading(false);
     setError(null);
@@ -95,15 +97,17 @@ export function RoomClient({ code }: { code: string }) {
     const timer = window.setTimeout(async () => {
       setSearching(true);
       try {
-        const res = await fetch(
-          `/api/catalog/search?q=${encodeURIComponent(query)}`,
-          { signal: controller.signal },
-        );
-        const data = await res.json();
+        const { data } = await fetchJson<{
+          tracks?: CatalogTrack[];
+          source?: "itunes" | "database" | "seed" | null;
+        }>(`/api/catalog/search?q=${encodeURIComponent(query)}`, {
+          signal: controller.signal,
+        });
         setCatalog(data.tracks ?? []);
         setCatalogSource(data.source ?? null);
-      } catch {
-        /* ignore abort */
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        /* ignore transient search failures */
       } finally {
         setSearching(false);
       }
@@ -128,12 +132,14 @@ export function RoomClient({ code }: { code: string }) {
   async function setPhase(phase: string) {
     setBusy(true);
     try {
-      const res = await fetch(`/api/rooms/${roomCode}`, {
-        method: "PATCH",
-        headers: authHeaders(roomCode),
-        body: JSON.stringify({ phase }),
-      });
-      const data = await res.json();
+      const { res, data } = await fetchJson<{ error?: string }>(
+        `/api/rooms/${roomCode}`,
+        {
+          method: "PATCH",
+          headers: authHeaders(roomCode),
+          body: JSON.stringify({ phase }),
+        },
+      );
       if (!res.ok) throw new Error(data.error || "Could not update phase");
       await refresh();
     } catch (err) {
@@ -148,15 +154,17 @@ export function RoomClient({ code }: { code: string }) {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/rooms/${roomCode}/songs`, {
-        method: "POST",
-        headers: authHeaders(roomCode),
-        body: JSON.stringify({
-          name: songTitle.trim(),
-          artists: songArtist.trim(),
-        }),
-      });
-      const data = await res.json();
+      const { res, data } = await fetchJson<{ error?: string }>(
+        `/api/rooms/${roomCode}/songs`,
+        {
+          method: "POST",
+          headers: authHeaders(roomCode),
+          body: JSON.stringify({
+            name: songTitle.trim(),
+            artists: songArtist.trim(),
+          }),
+        },
+      );
       if (!res.ok) throw new Error(data.error || "Could not add song");
       setSongTitle("");
       setSongArtist("");
@@ -172,18 +180,20 @@ export function RoomClient({ code }: { code: string }) {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/rooms/${roomCode}/songs`, {
-        method: "POST",
-        headers: authHeaders(roomCode),
-        body: JSON.stringify({
-          id: track.externalId || `catalog:${track.id}`,
-          name: track.title,
-          artists: track.artists,
-          albumArt: track.albumArt,
-          durationMs: track.durationMs,
-        }),
-      });
-      const data = await res.json();
+      const { res, data } = await fetchJson<{ error?: string }>(
+        `/api/rooms/${roomCode}/songs`,
+        {
+          method: "POST",
+          headers: authHeaders(roomCode),
+          body: JSON.stringify({
+            id: track.externalId || `catalog:${track.id}`,
+            name: track.title,
+            artists: track.artists,
+            albumArt: track.albumArt,
+            durationMs: track.durationMs,
+          }),
+        },
+      );
       if (!res.ok) throw new Error(data.error || "Could not add song");
       await refresh();
     } catch (err) {
@@ -196,14 +206,13 @@ export function RoomClient({ code }: { code: string }) {
   async function removeSong(songId: string) {
     setBusy(true);
     try {
-      const res = await fetch(
+      const { res, data } = await fetchJson<{ error?: string }>(
         `/api/rooms/${roomCode}/songs?songId=${encodeURIComponent(songId)}`,
         {
           method: "DELETE",
           headers: authHeaders(roomCode),
         },
       );
-      const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Could not remove song");
       await refresh();
     } catch (err) {
@@ -215,12 +224,14 @@ export function RoomClient({ code }: { code: string }) {
 
   async function vote(songId: string, value: VoteValue) {
     try {
-      const res = await fetch(`/api/rooms/${roomCode}/votes`, {
-        method: "POST",
-        headers: authHeaders(roomCode),
-        body: JSON.stringify({ songId, value }),
-      });
-      const data = await res.json();
+      const { res, data } = await fetchJson<{ error?: string }>(
+        `/api/rooms/${roomCode}/votes`,
+        {
+          method: "POST",
+          headers: authHeaders(roomCode),
+          body: JSON.stringify({ songId, value }),
+        },
+      );
       if (!res.ok) throw new Error(data.error || "Vote failed");
       await refresh();
     } catch (err) {
@@ -232,7 +243,11 @@ export function RoomClient({ code }: { code: string }) {
     e.preventDefault();
     setJoinError(null);
     try {
-      const res = await fetch("/api/rooms", {
+      const { res, data } = await fetchJson<{
+        code?: string;
+        participantToken?: string;
+        error?: string;
+      }>("/api/rooms", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -241,8 +256,9 @@ export function RoomClient({ code }: { code: string }) {
           name: joinName,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Could not join");
+      if (!res.ok || !data.code || !data.participantToken) {
+        throw new Error(data.error || "Could not join");
+      }
       const { storeParticipantToken } = await import("@/lib/session");
       storeParticipantToken(data.code, data.participantToken);
       await refresh();

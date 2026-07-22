@@ -1,11 +1,19 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
+import { fetchJson } from "@/lib/api";
 import {
   storeHostToken,
   storeParticipantToken,
 } from "@/lib/session";
+
+type RoomActionResponse = {
+  code?: string;
+  participantToken?: string;
+  hostToken?: string;
+  error?: string;
+};
 
 export function HomeClient() {
   const router = useRouter();
@@ -17,12 +25,17 @@ export function HomeClient() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Warm the free Render instance so create/join don't hit edge "Not Found".
+  useEffect(() => {
+    void fetchJson("/api/health", undefined, { retries: 6, retryDelayMs: 500 });
+  }, []);
+
   async function onCreate(e: FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/rooms", {
+      const { res, data } = await fetchJson<RoomActionResponse>("/api/rooms", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -31,8 +44,9 @@ export function HomeClient() {
           hostName,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Could not create room");
+      if (!res.ok || !data.code || !data.participantToken || !data.hostToken) {
+        throw new Error(data.error || "Could not create room");
+      }
       storeParticipantToken(data.code, data.participantToken);
       storeHostToken(data.code, data.hostToken);
       router.push(`/room/${data.code}`);
@@ -47,7 +61,7 @@ export function HomeClient() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/rooms", {
+      const { res, data } = await fetchJson<RoomActionResponse>("/api/rooms", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -56,8 +70,9 @@ export function HomeClient() {
           name: joinName,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Could not join room");
+      if (!res.ok || !data.code || !data.participantToken) {
+        throw new Error(data.error || "Could not join room");
+      }
       storeParticipantToken(data.code, data.participantToken);
       router.push(`/room/${data.code}`);
     } catch (err) {
@@ -141,7 +156,7 @@ export function HomeClient() {
                   />
                 </label>
                 <button className="btn-primary mt-2" disabled={loading}>
-                  {loading ? "Opening room…" : "Create room"}
+                  {loading ? "Waking server & opening room…" : "Create room"}
                 </button>
               </form>
             ) : (
