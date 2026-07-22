@@ -32,13 +32,13 @@ This repo includes a full [`render.yaml`](./render.yaml):
 4. Apply the Blueprint
 5. After first deploy, set `NEXT_PUBLIC_APP_URL` to your `https://….onrender.com` URL (optional but useful)
 
-On each deploy, Render runs:
+On each start (free tier has no pre-deploy step), the service runs:
 
 ```bash
-npm run db:migrate && npm run db:seed
+npm run db:migrate && npm run db:seed && npm run start
 ```
 
-That creates tables and loads the song catalog.
+That creates tables and loads the song catalog, then boots Next.js.
 
 > Free Render Postgres expires after 30 days of inactivity on free plans — upgrade or export data if you need it longer.
 
