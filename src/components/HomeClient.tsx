@@ -49,6 +49,14 @@ export function HomeClient() {
       }
       storeParticipantToken(data.code, data.participantToken);
       storeHostToken(data.code, data.hostToken);
+      // Confirm the room API is reachable before navigating (avoids a flash of Not Found).
+      await fetchJson(`/api/rooms/${data.code}`, {
+        headers: {
+          "Content-Type": "application/json",
+          "x-participant-token": data.participantToken,
+          "x-host-token": data.hostToken,
+        },
+      });
       router.push(`/room/${data.code}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");

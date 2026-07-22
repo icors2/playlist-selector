@@ -34,13 +34,16 @@ This repo includes a full [`render.yaml`](./render.yaml):
 
 > Only **one** free Postgres database is allowed per Render workspace. If Apply fails because a free DB already exists, delete/upgrade the old one or reuse it.
 
-On each start (free tier has no pre-deploy step), the service runs:
+Deploy lifecycle (free tier has no pre-deploy step):
 
 ```bash
-npm run db:migrate && npm run db:seed && npm run start
+# build
+npm ci && npm run build && npm run db:migrate
+# start (binds port immediately; seed runs alongside)
+bash scripts/start.sh
 ```
 
-That creates tables and loads the song catalog, then boots Next.js.
+Tables are created at build time. Catalog seeding happens after the web process is already listening so Render health checks don’t get plain-text `Not Found`.
 
 > Free Render Postgres expires after 30 days of inactivity on free plans — upgrade or export data if you need it longer.
 
