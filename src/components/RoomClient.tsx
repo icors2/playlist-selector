@@ -2,7 +2,14 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { fetchJson } from "@/lib/api";
 import { formatApproval, myVote } from "@/lib/consensus";
 import { authHeaders } from "@/lib/session";
@@ -52,6 +59,11 @@ export function RoomClient({ code }: { code: string }) {
     "itunes" | "database" | "seed" | null
   >(null);
   const [searching, setSearching] = useState(false);
+  const [newSongIds, setNewSongIds] = useState<Set<string>>(new Set());
+  const [showAddDuringVote, setShowAddDuringVote] = useState(true);
+  const seenSongIdsRef = useRef<Set<string>>(new Set());
+  const hasLoadedRef = useRef(false);
+  const phaseRef = useRef<string | undefined>(undefined);
 
   const refresh = useCallback(async () => {
     const { res, data } = await fetchJson<RoomStateResponse & { error?: string }>(
@@ -64,6 +76,33 @@ export function RoomClient({ code }: { code: string }) {
     if (!res.ok) {
       throw new Error(data.error || "Room not found");
     }
+
+    const incomingIds = data.songs.map((s) => s.id);
+    if (!hasLoadedRef.current) {
+      seenSongIdsRef.current = new Set(incomingIds);
+      hasLoadedRef.current = true;
+    } else {
+      const arrived = incomingIds.filter(
+        (id) => !seenSongIdsRef.current.has(id),
+      );
+      if (arrived.length > 0) {
+        for (const id of arrived) seenSongIdsRef.current.add(id);
+        setNewSongIds((current) => {
+          const next = new Set(current);
+          for (const id of arrived) next.add(id);
+          return next;
+        });
+        window.setTimeout(() => {
+          setNewSongIds((current) => {
+            const next = new Set(current);
+            for (const id of arrived) next.delete(id);
+            return next;
+          });
+        }, 8000);
+      }
+    }
+
+    phaseRef.current = data.room.phase;
     setState(data);
     setLoading(false);
     setError(null);
@@ -82,17 +121,33 @@ export function RoomClient({ code }: { code: string }) {
       }
     }
     boot();
+
+    // Live poll so newly added songs show up for everyone without a manual refresh.
     const id = window.setInterval(() => {
       refresh().catch(() => undefined);
-    }, 2500);
+    }, 1500);
+
+    function onVisible() {
+      if (document.visibilityState === "visible") {
+        refresh().catch(() => undefined);
+      }
+    }
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+
     return () => {
       alive = false;
       window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
     };
   }, [refresh]);
 
+  const canAddSongs =
+    state?.room.phase === "nominate" || state?.room.phase === "vote";
+
   useEffect(() => {
-    if (!state || state.room.phase !== "nominate") return;
+    if (!canAddSongs) return;
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       setSearching(true);
@@ -116,7 +171,7 @@ export function RoomClient({ code }: { code: string }) {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [query, state?.room.phase]);
+  }, [query, canAddSongs]);
 
   const votedCount = useMemo(() => {
     if (!state?.viewer) return 0;
@@ -124,6 +179,20 @@ export function RoomClient({ code }: { code: string }) {
       s.votes.some((v) => v.participantId === state.viewer!.id),
     ).length;
   }, [state]);
+
+  const voteSongs = useMemo(() => {
+    if (!state?.viewer) return state?.songs ?? [];
+    const viewerId = state.viewer.id;
+    return [...state.songs].sort((a, b) => {
+      const aVoted = a.votes.some((v) => v.participantId === viewerId);
+      const bVoted = b.votes.some((v) => v.participantId === viewerId);
+      if (aVoted !== bVoted) return aVoted ? 1 : -1;
+      const aNew = newSongIds.has(a.id);
+      const bNew = newSongIds.has(b.id);
+      if (aNew !== bNew) return aNew ? -1 : 1;
+      return a.createdAt.localeCompare(b.createdAt);
+    });
+  }, [state, newSongIds]);
 
   const requiredApprovals =
     state?.consensus.requiredApprovals ??
@@ -402,6 +471,15 @@ export function RoomClient({ code }: { code: string }) {
               Reveal playlist
             </button>
           ) : null}
+          {state.room.phase === "vote" ? (
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => setShowAddDuringVote((v) => !v)}
+            >
+              {showAddDuringVote ? "Hide add songs" : "Add more songs"}
+            </button>
+          ) : null}
         </div>
       </header>
 
@@ -465,8 +543,9 @@ export function RoomClient({ code }: { code: string }) {
           <div className="panel p-5 sm:p-6">
             <h2 className="font-display text-2xl font-bold">Nominate songs</h2>
             <p className="mt-1 text-sm text-paper-dim">
-              Search Apple’s iTunes catalog (free, no login) — artwork, album,
-              year, and genre so everyone knows what they’re voting for.
+              Search Apple’s iTunes catalog (free, no login). You can keep
+              adding songs after voting starts — the list updates live for
+              everyone.
             </p>
 
             <input
@@ -637,78 +716,237 @@ export function RoomClient({ code }: { code: string }) {
       ) : null}
 
       {state.room.phase === "vote" ? (
-        <section className="mt-10">
-          <div className="mb-4 flex items-end justify-between gap-3">
-            <div>
-              <h2 className="font-display text-2xl font-bold">Cast your votes</h2>
-              <p className="mt-1 text-paper-dim">
-                Love or Okay counts as approval. A song needs{" "}
-                <span className="text-paper">
-                  {requiredApprovals} of {state.participants.length}
-                </span>{" "}
-                approvals (80%) to make the playlist.
+        <section className="mt-10 grid gap-8 lg:grid-cols-[1.1fr_0.9fr]">
+          <div>
+            <div className="mb-4 flex items-end justify-between gap-3">
+              <div>
+                <h2 className="font-display text-2xl font-bold">
+                  Cast your votes
+                </h2>
+                <p className="mt-1 text-paper-dim">
+                  Love or Okay counts as approval. A song needs{" "}
+                  <span className="text-paper">
+                    {requiredApprovals} of {state.participants.length}
+                  </span>{" "}
+                  approvals (80%). New songs appear here live — keep voting as
+                  they show up.
+                </p>
+              </div>
+              <p className="text-sm text-paper-dim">
+                {votedCount}/{state.songs.length} voted
               </p>
             </div>
-            <p className="text-sm text-paper-dim">
-              {votedCount}/{state.songs.length} voted
-            </p>
-          </div>
-          <ul className="grid gap-4">
-            {state.songs.map((song) => {
-              const current = myVote(song, state.viewer!.id);
-              const summary = state.consensus.all.find((s) => s.id === song.id);
-              return (
-                <li
-                  key={song.id}
-                  className="panel flex flex-col gap-4 p-4 sm:flex-row sm:items-center"
-                >
-                  <div className="flex min-w-0 flex-1 items-center gap-3">
-                    {song.albumArt ? (
-                      <Image
-                        src={song.albumArt}
-                        alt=""
-                        width={56}
-                        height={56}
-                        className="h-14 w-14 shrink-0 rounded-lg object-cover"
-                        unoptimized
-                      />
-                    ) : (
-                      <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-ink-soft text-paper-dim">
-                        ♪
-                      </div>
-                    )}
-                    <div className="min-w-0">
-                      <p className="truncate font-semibold">{song.name}</p>
-                      <p className="truncate text-sm text-paper-dim">
-                        {song.artists}
-                        {summary ? ` · ${formatApproval(summary)}` : ""}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex w-full gap-2 sm:w-auto sm:min-w-[280px]">
-                    {(
-                      [
-                        ["love", "Love"],
-                        ["okay", "Okay"],
-                        ["pass", "Pass"],
-                      ] as const
-                    ).map(([value, label]) => (
-                      <button
-                        key={value}
-                        type="button"
-                        className="vote-btn"
-                        data-kind={value}
-                        data-active={current === value}
-                        onClick={() => vote(song.id, value)}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
+            <ul className="grid gap-4">
+              {voteSongs.length === 0 ? (
+                <li className="panel p-4 text-sm text-paper-dim">
+                  No songs yet — add one on the right and it will show up for
+                  everyone to vote.
                 </li>
-              );
-            })}
-          </ul>
+              ) : null}
+              {voteSongs.map((song) => {
+                const current = myVote(song, state.viewer!.id);
+                const summary = state.consensus.all.find(
+                  (s) => s.id === song.id,
+                );
+                const isNew = newSongIds.has(song.id);
+                const needsVote = !current;
+                return (
+                  <li
+                    key={song.id}
+                    className={`panel flex flex-col gap-4 p-4 sm:flex-row sm:items-center ${
+                      isNew ? "ring-1 ring-amber/60" : ""
+                    } ${needsVote ? "" : "opacity-90"}`}
+                  >
+                    <div className="flex min-w-0 flex-1 items-center gap-3">
+                      {song.albumArt ? (
+                        <Image
+                          src={song.albumArt}
+                          alt=""
+                          width={56}
+                          height={56}
+                          className="h-14 w-14 shrink-0 rounded-lg object-cover"
+                          unoptimized
+                        />
+                      ) : (
+                        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-ink-soft text-paper-dim">
+                          ♪
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <p className="flex items-center gap-2 truncate font-semibold">
+                          <span className="truncate">{song.name}</span>
+                          {isNew ? (
+                            <span className="shrink-0 rounded-full bg-amber/20 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-amber">
+                              New
+                            </span>
+                          ) : null}
+                          {needsVote ? (
+                            <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-foam">
+                              Needs your vote
+                            </span>
+                          ) : null}
+                        </p>
+                        <p className="truncate text-sm text-paper-dim">
+                          {song.artists}
+                          {song.nominatedByName
+                            ? ` · ${song.nominatedByName}`
+                            : ""}
+                          {summary ? ` · ${formatApproval(summary)}` : ""}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex w-full gap-2 sm:w-auto sm:min-w-[280px]">
+                      {(
+                        [
+                          ["love", "Love"],
+                          ["okay", "Okay"],
+                          ["pass", "Pass"],
+                        ] as const
+                      ).map(([value, label]) => (
+                        <button
+                          key={value}
+                          type="button"
+                          className="vote-btn"
+                          data-kind={value}
+                          data-active={current === value}
+                          onClick={() => vote(song.id, value)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+
+          {showAddDuringVote ? (
+            <div className="panel h-fit p-5 sm:p-6 lg:sticky lg:top-6">
+              <h2 className="font-display text-2xl font-bold">Add songs</h2>
+              <p className="mt-1 text-sm text-paper-dim">
+                Keep nominating while others vote. New tracks land in the list
+                within a couple seconds.
+              </p>
+
+              <input
+                className="field mt-4"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search songs or artists…"
+              />
+              {catalogSource ? (
+                <p className="mt-2 text-xs text-paper-dim">
+                  {catalogSource === "itunes"
+                    ? "Results from iTunes Search"
+                    : catalogSource === "database"
+                      ? "Results from local catalog"
+                      : "Built-in catalog"}
+                  {searching ? " · searching…" : ""}
+                </p>
+              ) : null}
+
+              <ul className="mt-4 grid max-h-[42vh] gap-2 overflow-y-auto pr-1">
+                {catalog.length === 0 && !searching ? (
+                  <li className="text-sm text-paper-dim">
+                    No matches. Try another search or add manually below.
+                  </li>
+                ) : null}
+                {catalog.map((track) => {
+                  const already = state.songs.some(
+                    (s) =>
+                      s.spotifyTrackId ===
+                        (track.externalId || `catalog:${track.id}`) ||
+                      (s.name.toLowerCase() === track.title.toLowerCase() &&
+                        s.artists.toLowerCase() ===
+                          track.artists.toLowerCase()),
+                  );
+                  return (
+                    <li
+                      key={track.id}
+                      className="flex items-center gap-3 rounded-2xl border border-[var(--line)] p-2.5"
+                    >
+                      {track.albumArt ? (
+                        <Image
+                          src={track.albumArt}
+                          alt=""
+                          width={44}
+                          height={44}
+                          className="h-11 w-11 shrink-0 rounded-lg object-cover"
+                          unoptimized
+                        />
+                      ) : (
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-ink-soft text-xs text-paper-dim">
+                          ♪
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-semibold">{track.title}</p>
+                        <p className="truncate text-sm text-paper-dim">
+                          {track.artists}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn-ghost shrink-0 px-3 py-2 text-sm"
+                        disabled={already || busy}
+                        onClick={() => nominateFromCatalog(track)}
+                      >
+                        {already ? "Added" : "Add"}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+
+              <div className="mt-5 border-t border-[var(--line)] pt-4">
+                <button
+                  type="button"
+                  className="text-sm text-amber underline"
+                  onClick={() => setShowManual((v) => !v)}
+                >
+                  {showManual
+                    ? "Hide manual entry"
+                    : "Song not listed? Add it manually"}
+                </button>
+                {showManual ? (
+                  <form className="mt-3 grid gap-3" onSubmit={nominateManual}>
+                    <label className="grid gap-1.5 text-sm text-paper-dim">
+                      Song title
+                      <input
+                        className="field"
+                        value={songTitle}
+                        onChange={(e) => setSongTitle(e.target.value)}
+                        placeholder="Mr. Brightside"
+                        required
+                        maxLength={200}
+                      />
+                    </label>
+                    <label className="grid gap-1.5 text-sm text-paper-dim">
+                      Artist
+                      <input
+                        className="field"
+                        value={songArtist}
+                        onChange={(e) => setSongArtist(e.target.value)}
+                        placeholder="The Killers"
+                        required
+                        maxLength={200}
+                      />
+                    </label>
+                    <button
+                      type="submit"
+                      className="btn-primary justify-self-start"
+                      disabled={
+                        busy || !songTitle.trim() || !songArtist.trim()
+                      }
+                    >
+                      {busy ? "Adding…" : "Add custom song"}
+                    </button>
+                  </form>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
         </section>
       ) : null}
 

@@ -209,7 +209,8 @@ export async function nominateSong(options: {
 }) {
   const room = await getRoomByCode(options.code);
   if (!room) return { error: "Room not found" as const };
-  if (room.phase !== "nominate") {
+  // Keep nominations open during voting so the group can keep adding songs.
+  if (room.phase !== "nominate" && room.phase !== "vote") {
     return { error: "Nominations are closed" as const };
   }
 
@@ -340,8 +341,12 @@ export async function removeSong(options: {
 }) {
   const room = await getRoomByCode(options.code);
   if (!room) return { error: "Room not found" as const };
-  if (room.phase !== "nominate" && room.phase !== "lobby") {
-    return { error: "Songs can only be removed during nominations" as const };
+  if (
+    room.phase !== "nominate" &&
+    room.phase !== "lobby" &&
+    room.phase !== "vote"
+  ) {
+    return { error: "Songs can only be removed before results" as const };
   }
 
   const participant = await getParticipantByToken(options.participantToken);

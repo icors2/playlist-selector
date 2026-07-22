@@ -27,6 +27,7 @@ export type RoomStateResponse = {
     durationMs: number;
     nominatedBy: string | null;
     nominatedByName: string | null;
+    createdAt: string;
     votes: {
       id: string;
       songId: string;
