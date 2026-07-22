@@ -63,7 +63,6 @@ export function RoomClient({ code }: { code: string }) {
   const [showAddDuringVote, setShowAddDuringVote] = useState(true);
   const seenSongIdsRef = useRef<Set<string>>(new Set());
   const hasLoadedRef = useRef(false);
-  const phaseRef = useRef<string | undefined>(undefined);
 
   const refresh = useCallback(async () => {
     const { res, data } = await fetchJson<RoomStateResponse & { error?: string }>(
@@ -102,7 +101,6 @@ export function RoomClient({ code }: { code: string }) {
       }
     }
 
-    phaseRef.current = data.room.phase;
     setState(data);
     setLoading(false);
     setError(null);
