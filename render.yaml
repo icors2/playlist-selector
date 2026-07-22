@@ -18,9 +18,10 @@ services:
     plan: free
     branch: cursor/manual-playlist-ba17
     autoDeployTrigger: commit
-    # Free tier: no preDeployCommand. Start Next immediately so the port binds
-    # while migrate/seed run alongside (see scripts/start.sh).
-    buildCommand: npm ci && npm run build
+    # Free tier: no preDeployCommand.
+    # Migrate during build (DB is available). Start Next immediately on boot;
+    # seed runs in the background so the port binds for health checks.
+    buildCommand: npm ci && npm run build && npm run db:migrate
     startCommand: bash scripts/start.sh
     healthCheckPath: /api/health
     envVars:
