@@ -1,0 +1,286 @@
+@import "tailwindcss";
+
+:root {
+  --ink: #101218;
+  --ink-soft: #1a1e28;
+  --stage: #241c14;
+  --amber: #e6a04a;
+  --amber-hot: #f0b96a;
+  --foam: #6fb8a8;
+  --foam-dim: #3d7a70;
+  --paper: #f4efe6;
+  --paper-dim: #cfc6b8;
+  --pass: #c45c4a;
+  --love: #e6a04a;
+  --okay: #6fb8a8;
+  --line: rgba(244, 239, 230, 0.12);
+  --glow: rgba(230, 160, 74, 0.22);
+  --background: var(--ink);
+  --foreground: var(--paper);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-amber: var(--amber);
+  --color-amber-hot: var(--amber-hot);
+  --color-foam: var(--foam);
+  --color-paper: var(--paper);
+  --color-paper-dim: var(--paper-dim);
+  --color-pass: var(--pass);
+  --color-love: var(--love);
+  --color-okay: var(--okay);
+  --font-sans: var(--font-body);
+  --font-display: var(--font-display);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-height: 100%;
+  color: var(--paper);
+  background:
+    radial-gradient(ellipse 80% 55% at 70% 10%, rgba(230, 160, 74, 0.18), transparent 55%),
+    radial-gradient(ellipse 50% 40% at 10% 80%, rgba(111, 184, 168, 0.12), transparent 50%),
+    linear-gradient(165deg, #141821 0%, #101218 45%, #1a1410 100%);
+  background-attachment: fixed;
+  font-family: var(--font-body), system-ui, sans-serif;
+}
+
+::selection {
+  background: rgba(230, 160, 74, 0.35);
+  color: var(--paper);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.font-display {
+  font-family: var(--font-display), system-ui, sans-serif;
+}
+
+.stage-grain {
+  position: relative;
+  isolation: isolate;
+}
+
+.stage-grain::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  opacity: 0.07;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+.hero-visual {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(16, 18, 24, 0.35) 0%, rgba(16, 18, 24, 0.55) 40%, rgba(16, 18, 24, 0.92) 100%),
+    url("https://images.unsplash.com/photo-1514525253161-7a46d19cd819?auto=format&fit=crop&w=2000&q=80")
+      center / cover no-repeat;
+  transform: scale(1.04);
+  animation: slow-drift 18s ease-in-out infinite alternate;
+}
+
+@keyframes slow-drift {
+  from {
+    transform: scale(1.04) translate3d(0, 0, 0);
+  }
+  to {
+    transform: scale(1.1) translate3d(-1.5%, -1%, 0);
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(230, 160, 74, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 12px rgba(230, 160, 74, 0);
+  }
+}
+
+@keyframes vinyl-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-rise {
+  animation: rise-in 0.7s ease-out both;
+}
+
+.animate-rise-delay {
+  animation: rise-in 0.8s ease-out 0.12s both;
+}
+
+.animate-rise-delay-2 {
+  animation: rise-in 0.85s ease-out 0.24s both;
+}
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: none;
+  border-radius: 999px;
+  padding: 0.9rem 1.4rem;
+  background: linear-gradient(135deg, var(--amber-hot), var(--amber));
+  color: #1a1208;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: transform 0.2s ease, filter 0.2s ease;
+  animation: pulse-glow 2.8s ease-in-out infinite;
+}
+
+.btn-primary:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+}
+
+.btn-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  animation: none;
+}
+
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.85rem 1.3rem;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--paper);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(244, 239, 230, 0.25);
+}
+
+.field {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(10, 12, 18, 0.55);
+  color: var(--paper);
+  padding: 0.9rem 1rem;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.field:focus {
+  border-color: rgba(230, 160, 74, 0.55);
+  box-shadow: 0 0 0 3px var(--glow);
+}
+
+.field::placeholder {
+  color: rgba(244, 239, 230, 0.4);
+}
+
+.panel {
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: rgba(20, 24, 34, 0.72);
+  backdrop-filter: blur(10px);
+}
+
+.vote-btn {
+  flex: 1;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 0.85rem 0.5rem;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--paper);
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.vote-btn:hover {
+  transform: translateY(-2px);
+}
+
+.vote-btn[data-active="true"][data-kind="love"] {
+  background: rgba(230, 160, 74, 0.2);
+  border-color: var(--amber);
+  color: var(--amber-hot);
+}
+
+.vote-btn[data-active="true"][data-kind="okay"] {
+  background: rgba(111, 184, 168, 0.18);
+  border-color: var(--foam);
+  color: var(--foam);
+}
+
+.vote-btn[data-active="true"][data-kind="pass"] {
+  background: rgba(196, 92, 74, 0.18);
+  border-color: var(--pass);
+  color: #f0a090;
+}
+
+.album-ring {
+  position: relative;
+}
+
+.album-ring::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 1px dashed rgba(230, 160, 74, 0.35);
+  animation: vinyl-spin 24s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-visual,
+  .animate-rise,
+  .animate-rise-delay,
+  .animate-rise-delay-2,
+  .btn-primary,
+  .album-ring::after {
+    animation: none !important;
+  }
+}
