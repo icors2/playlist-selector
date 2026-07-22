@@ -49,7 +49,7 @@ Tables are created at build time. Catalog seeding happens after the web process 
 
 ## How voting works
 
-With `N` people in the room, a song needs `ceil(N × 0.8)` Love/Okay votes to make the playlist. Copy the winning list and add those tracks in Spotify yourself.
+With `N` people in the room, a song needs `ceil(N × 0.8)` Love/Okay votes to make the playlist. Nominations stay open during voting — new songs show up live (~1.5s poll) so everyone can vote as tracks are added. Copy the winning list and add those tracks in Spotify yourself.
 
 ## Local development
 
