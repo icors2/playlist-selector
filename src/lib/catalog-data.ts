@@ -19,6 +19,8 @@ export type CatalogTrack = {
   albumArt: string | null;
   durationMs: number;
   externalId: string | null;
+  /** Optional 30s preview (e.g. from iTunes). */
+  previewUrl?: string | null;
 };
 
 /** Curated library so voters can browse real songs without Spotify API. */

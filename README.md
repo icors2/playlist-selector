@@ -1,6 +1,19 @@
 # Okaylist
 
-Group playlist voting with an **80% approval** rule. Search a built-in song database (title, artist, album, year, genre), vote Love / Okay / Pass, then copy the winners into Spotify by hand.
+Group playlist voting with an **80% approval** rule. Nominate from Apple’s **iTunes Search API** (no API key), vote Love / Okay / Pass, then copy the winners into Spotify by hand.
+
+## Song search (iTunes)
+
+Typing in Nominate hits Apple’s public [iTunes Search API](https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/iTuneSearchAPI/):
+
+```
+GET https://itunes.apple.com/search?term=…&media=music&entity=song
+```
+
+- **No API key / OAuth** — server-side fetch from `src/lib/itunes.ts`
+- App route: `GET /api/catalog/search?q=…`
+- Empty query browses the local Postgres seed catalog; typed queries prefer iTunes, then fall back to local DB/seed
+- Artwork hosts (`*.mzstatic.com`) are allowlisted in `next.config.ts`
 
 ## Render deploy (Blueprint)
 

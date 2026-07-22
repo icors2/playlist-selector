@@ -47,9 +47,9 @@ export function RoomClient({ code }: { code: string }) {
   const [showManual, setShowManual] = useState(false);
   const [query, setQuery] = useState("");
   const [catalog, setCatalog] = useState<CatalogTrack[]>([]);
-  const [catalogSource, setCatalogSource] = useState<"database" | "seed" | null>(
-    null,
-  );
+  const [catalogSource, setCatalogSource] = useState<
+    "itunes" | "database" | "seed" | null
+  >(null);
   const [searching, setSearching] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -449,20 +449,23 @@ export function RoomClient({ code }: { code: string }) {
           <div className="panel p-5 sm:p-6">
             <h2 className="font-display text-2xl font-bold">Nominate songs</h2>
             <p className="mt-1 text-sm text-paper-dim">
-              Search the song database — see artist, album, year, and genre so
-              everyone knows what they’re voting for.
+              Search Apple’s iTunes catalog (free, no login) — artwork, album,
+              year, and genre so everyone knows what they’re voting for.
             </p>
 
             <input
               className="field mt-4"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search title, artist, album, or genre…"
+              placeholder="Search songs or artists…"
             />
             {catalogSource ? (
               <p className="mt-2 text-xs text-paper-dim">
-                Showing {catalogSource === "database" ? "database" : "built-in"}{" "}
-                catalog
+                {catalogSource === "itunes"
+                  ? "Results from iTunes Search"
+                  : catalogSource === "database"
+                    ? "Results from local catalog"
+                    : "Built-in catalog"}
                 {searching ? " · searching…" : ""}
               </p>
             ) : null}

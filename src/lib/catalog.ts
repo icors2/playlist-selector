@@ -2,8 +2,11 @@ import { ilike, or, sql } from "drizzle-orm";
 import { db } from "../../db";
 import { catalogTracks } from "../../db/schema";
 import { CATALOG_SEED, type CatalogTrack } from "./catalog-data";
+import { searchItunes } from "./itunes";
 
 export type { CatalogTrack };
+
+export type CatalogSearchSource = "itunes" | "database" | "seed";
 
 function mapRow(row: typeof catalogTracks.$inferSelect): CatalogTrack {
   return {
@@ -19,7 +22,7 @@ function mapRow(row: typeof catalogTracks.$inferSelect): CatalogTrack {
   };
 }
 
-/** In-memory fallback when DB isn't available (local solo testing). */
+/** In-memory fallback when DB / iTunes aren't available. */
 function searchSeed(query: string, limit: number): CatalogTrack[] {
   const q = query.trim().toLowerCase();
   const rows = !q
@@ -45,9 +48,9 @@ function searchSeed(query: string, limit: number): CatalogTrack[] {
   }));
 }
 
-export async function searchCatalog(
+async function searchLocalDatabase(
   query: string,
-  limit = 20,
+  limit: number,
 ): Promise<{ tracks: CatalogTrack[]; source: "database" | "seed" }> {
   if (!db) {
     return { tracks: searchSeed(query, limit), source: "seed" };
@@ -84,7 +87,6 @@ export async function searchCatalog(
       .limit(limit);
 
     if (rows.length === 0) {
-      // Fall back to seed filter so empty DB still feels useful before seed runs
       const seeded = searchSeed(query, limit);
       return {
         tracks: seeded,
@@ -97,4 +99,29 @@ export async function searchCatalog(
     console.error("catalog search failed", err);
     return { tracks: searchSeed(query, limit), source: "seed" };
   }
+}
+
+/**
+ * Search songs for nomination.
+ * - Empty query: browse local Render DB catalog (or seed).
+ * - With query: iTunes Search API first (no key), then local fallback.
+ */
+export async function searchCatalog(
+  query: string,
+  limit = 20,
+): Promise<{ tracks: CatalogTrack[]; source: CatalogSearchSource }> {
+  const q = query.trim();
+
+  if (q) {
+    try {
+      const itunes = await searchItunes(q, limit);
+      if (itunes.length > 0) {
+        return { tracks: itunes, source: "itunes" };
+      }
+    } catch (err) {
+      console.error("iTunes search failed, falling back to local catalog", err);
+    }
+  }
+
+  return searchLocalDatabase(query, limit);
 }

@@ -6,7 +6,7 @@ export async function GET(request: Request) {
   const q = searchParams.get("q") ?? "";
   const limit = Math.min(
     40,
-    Math.max(1, Number(searchParams.get("limit") ?? 20) || 20),
+    Math.max(1, Number(searchParams.get("limit") ?? 25) || 25),
   );
   const result = await searchCatalog(q, limit);
   return NextResponse.json(result);
