@@ -99,3 +99,28 @@ export const votes = pgTable(
     ),
   ],
 );
+
+/** Searchable song library (not tied to a room) so voters know what they're picking. */
+export const catalogTracks = pgTable(
+  "catalog_tracks",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    title: text("title").notNull(),
+    artists: text("artists").notNull(),
+    album: text("album"),
+    year: integer("year"),
+    genre: text("genre"),
+    albumArt: text("album_art"),
+    durationMs: integer("duration_ms").notNull().default(0),
+    externalId: text("external_id"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("catalog_tracks_title_artists_idx").on(
+      table.title,
+      table.artists,
+    ),
+  ],
+);

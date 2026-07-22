@@ -1,0 +1,36 @@
+# Okaylist — Render Blueprint
+# Dashboard: New → Blueprint → connect this repo / branch
+# Docs: https://render.com/docs/blueprint-spec
+
+previews:
+  generation: automatic
+
+databases:
+  - name: okaylist-db
+    plan: free
+    region: oregon
+    databaseName: okaylist
+    user: okaylist
+    postgresMajorVersion: "16"
+
+services:
+  - type: web
+    name: okaylist
+    runtime: node
+    region: oregon
+    plan: free
+    branch: cursor/manual-playlist-ba17
+    autoDeployTrigger: commit
+    buildCommand: npm ci && npm run build
+    preDeployCommand: npm run db:migrate && npm run db:seed
+    startCommand: npm run start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: okaylist-db
+          property: connectionString
+      - key: NEXT_PUBLIC_APP_URL
+        sync: false

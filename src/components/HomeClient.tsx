@@ -85,9 +85,8 @@ export function HomeClient() {
               Okaylist
             </h1>
             <p className="animate-rise-delay mt-4 max-w-md text-lg text-paper-dim sm:text-xl">
-              Nominate songs by hand, vote as a group, and build a playlist
-              everyone mostly agrees on — then add the winners to Spotify
-              yourself.
+              Search a song database, vote as a group, and keep tracks that hit
+              80% approval — then add the winners to Spotify yourself.
             </p>
           </div>
 

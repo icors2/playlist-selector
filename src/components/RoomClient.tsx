@@ -5,8 +5,17 @@ import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { formatApproval, myVote } from "@/lib/consensus";
 import { authHeaders } from "@/lib/session";
-import type { RoomStateResponse, SearchTrack } from "@/lib/types";
+import type { CatalogTrack } from "@/lib/catalog-data";
+import type { RoomStateResponse } from "@/lib/types";
 import type { VoteValue } from "@/lib/models";
+
+function formatDuration(ms: number) {
+  if (!ms) return "";
+  const total = Math.round(ms / 1000);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
 
 function phaseLabel(phase: string) {
   switch (phase) {
@@ -35,10 +44,12 @@ export function RoomClient({ code }: { code: string }) {
   const [joinError, setJoinError] = useState<string | null>(null);
   const [songTitle, setSongTitle] = useState("");
   const [songArtist, setSongArtist] = useState("");
+  const [showManual, setShowManual] = useState(false);
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<SearchTrack[]>([]);
-  const [spotifyReady, setSpotifyReady] = useState(false);
-  const [showSpotifySearch, setShowSpotifySearch] = useState(false);
+  const [catalog, setCatalog] = useState<CatalogTrack[]>([]);
+  const [catalogSource, setCatalogSource] = useState<"database" | "seed" | null>(
+    null,
+  );
   const [searching, setSearching] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -61,9 +72,6 @@ export function RoomClient({ code }: { code: string }) {
     async function boot() {
       try {
         await refresh();
-        const statusRes = await fetch("/api/spotify/status");
-        const status = await statusRes.json();
-        if (alive) setSpotifyReady(Boolean(status.configured));
       } catch (err) {
         if (alive) {
           setError(err instanceof Error ? err.message : "Failed to load room");
@@ -82,29 +90,29 @@ export function RoomClient({ code }: { code: string }) {
   }, [refresh]);
 
   useEffect(() => {
-    if (!state || state.room.phase !== "nominate" || !showSpotifySearch) return;
-    if (!spotifyReady) return;
+    if (!state || state.room.phase !== "nominate") return;
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       setSearching(true);
       try {
         const res = await fetch(
-          `/api/spotify/search?q=${encodeURIComponent(query || "party")}`,
+          `/api/catalog/search?q=${encodeURIComponent(query)}`,
           { signal: controller.signal },
         );
         const data = await res.json();
-        setResults(data.tracks ?? []);
+        setCatalog(data.tracks ?? []);
+        setCatalogSource(data.source ?? null);
       } catch {
         /* ignore abort */
       } finally {
         setSearching(false);
       }
-    }, 280);
+    }, 220);
     return () => {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [query, state?.room.phase, showSpotifySearch, spotifyReady]);
+  }, [query, state?.room.phase]);
 
   const votedCount = useMemo(() => {
     if (!state?.viewer) return 0;
@@ -160,13 +168,20 @@ export function RoomClient({ code }: { code: string }) {
     }
   }
 
-  async function nominate(track: SearchTrack) {
+  async function nominateFromCatalog(track: CatalogTrack) {
     setBusy(true);
+    setError(null);
     try {
       const res = await fetch(`/api/rooms/${roomCode}/songs`, {
         method: "POST",
         headers: authHeaders(roomCode),
-        body: JSON.stringify(track),
+        body: JSON.stringify({
+          id: track.externalId || `catalog:${track.id}`,
+          name: track.title,
+          artists: track.artists,
+          albumArt: track.albumArt,
+          durationMs: track.durationMs,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Could not add song");
@@ -404,10 +419,10 @@ export function RoomClient({ code }: { code: string }) {
         <section className="panel mt-10 p-6 sm:p-8 animate-rise-delay-2">
           <h2 className="font-display text-2xl font-bold">Waiting room</h2>
           <p className="mt-2 max-w-xl text-paper-dim">
-            Share the code. Everyone will type song titles to nominate, then
-            vote. A song makes the playlist when at least{" "}
+            Share the code. Search the song database to nominate tracks people
+            recognize, then vote. A song makes the playlist when at least{" "}
             <span className="text-paper">80% of the group</span> marks it Love
-            or Okay — then you add the winners to Spotify by hand.
+            or Okay — then copy the winners into Spotify by hand.
           </p>
           <p className="mt-6 font-display text-5xl tracking-[0.25em] text-amber">
             {roomCode}
@@ -430,113 +445,128 @@ export function RoomClient({ code }: { code: string }) {
       ) : null}
 
       {state.room.phase === "nominate" ? (
-        <section className="mt-10 grid gap-8 lg:grid-cols-[1.1fr_0.9fr]">
+        <section className="mt-10 grid gap-8 lg:grid-cols-[1.15fr_0.85fr]">
           <div className="panel p-5 sm:p-6">
             <h2 className="font-display text-2xl font-bold">Nominate songs</h2>
             <p className="mt-1 text-sm text-paper-dim">
-              Type any song title and artist — no Spotify login needed.
+              Search the song database — see artist, album, year, and genre so
+              everyone knows what they’re voting for.
             </p>
 
-            <form className="mt-4 grid gap-3" onSubmit={nominateManual}>
-              <label className="grid gap-1.5 text-sm text-paper-dim">
-                Song title
-                <input
-                  className="field"
-                  value={songTitle}
-                  onChange={(e) => setSongTitle(e.target.value)}
-                  placeholder="Mr. Brightside"
-                  required
-                  maxLength={200}
-                />
-              </label>
-              <label className="grid gap-1.5 text-sm text-paper-dim">
-                Artist
-                <input
-                  className="field"
-                  value={songArtist}
-                  onChange={(e) => setSongArtist(e.target.value)}
-                  placeholder="The Killers"
-                  required
-                  maxLength={200}
-                />
-              </label>
-              <button
-                type="submit"
-                className="btn-primary justify-self-start"
-                disabled={busy || !songTitle.trim() || !songArtist.trim()}
-              >
-                {busy ? "Adding…" : "Add song"}
-              </button>
-            </form>
+            <input
+              className="field mt-4"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search title, artist, album, or genre…"
+            />
+            {catalogSource ? (
+              <p className="mt-2 text-xs text-paper-dim">
+                Showing {catalogSource === "database" ? "database" : "built-in"}{" "}
+                catalog
+                {searching ? " · searching…" : ""}
+              </p>
+            ) : null}
 
-            {spotifyReady ? (
-              <div className="mt-6 border-t border-[var(--line)] pt-4">
-                <button
-                  type="button"
-                  className="text-sm text-amber underline"
-                  onClick={() => setShowSpotifySearch((v) => !v)}
-                >
-                  {showSpotifySearch
-                    ? "Hide Spotify search"
-                    : "Optional: search Spotify"}
-                </button>
-                {showSpotifySearch ? (
-                  <div className="mt-3">
+            <ul className="mt-4 grid gap-2">
+              {catalog.length === 0 && !searching ? (
+                <li className="text-sm text-paper-dim">
+                  No matches. Try another search or add a song manually below.
+                </li>
+              ) : null}
+              {catalog.map((track) => {
+                const already = state.songs.some(
+                  (s) =>
+                    s.spotifyTrackId === (track.externalId || `catalog:${track.id}`) ||
+                    (s.name.toLowerCase() === track.title.toLowerCase() &&
+                      s.artists.toLowerCase() === track.artists.toLowerCase()),
+                );
+                return (
+                  <li
+                    key={track.id}
+                    className="flex items-center gap-3 rounded-2xl border border-[var(--line)] p-2.5"
+                  >
+                    {track.albumArt ? (
+                      <Image
+                        src={track.albumArt}
+                        alt=""
+                        width={52}
+                        height={52}
+                        className="h-[52px] w-[52px] shrink-0 rounded-lg object-cover"
+                        unoptimized
+                      />
+                    ) : (
+                      <div className="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-lg bg-ink-soft text-xs text-paper-dim">
+                        ♪
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-semibold">{track.title}</p>
+                      <p className="truncate text-sm text-paper-dim">
+                        {track.artists}
+                      </p>
+                      <p className="truncate text-xs text-paper-dim/80">
+                        {[track.album, track.year, track.genre, formatDuration(track.durationMs)]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn-ghost shrink-0 px-3 py-2 text-sm"
+                      disabled={already || busy}
+                      onClick={() => nominateFromCatalog(track)}
+                    >
+                      {already ? "Added" : "Add"}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+
+            <div className="mt-6 border-t border-[var(--line)] pt-4">
+              <button
+                type="button"
+                className="text-sm text-amber underline"
+                onClick={() => setShowManual((v) => !v)}
+              >
+                {showManual
+                  ? "Hide manual entry"
+                  : "Song not in the database? Add it manually"}
+              </button>
+              {showManual ? (
+                <form className="mt-3 grid gap-3" onSubmit={nominateManual}>
+                  <label className="grid gap-1.5 text-sm text-paper-dim">
+                    Song title
                     <input
                       className="field"
-                      value={query}
-                      onChange={(e) => setQuery(e.target.value)}
-                      placeholder="Search Spotify…"
+                      value={songTitle}
+                      onChange={(e) => setSongTitle(e.target.value)}
+                      placeholder="Mr. Brightside"
+                      required
+                      maxLength={200}
                     />
-                    <ul className="mt-3 grid gap-2">
-                      {searching && results.length === 0 ? (
-                        <li className="text-sm text-paper-dim">Searching…</li>
-                      ) : null}
-                      {results.map((track) => {
-                        const already = state.songs.some(
-                          (s) => s.spotifyTrackId === track.id,
-                        );
-                        return (
-                          <li
-                            key={track.id}
-                            className="flex items-center gap-3 rounded-2xl border border-[var(--line)] p-2.5"
-                          >
-                            {track.albumArt ? (
-                              <Image
-                                src={track.albumArt}
-                                alt=""
-                                width={40}
-                                height={40}
-                                className="h-10 w-10 rounded-lg object-cover"
-                                unoptimized
-                              />
-                            ) : (
-                              <div className="h-10 w-10 rounded-lg bg-ink-soft" />
-                            )}
-                            <div className="min-w-0 flex-1">
-                              <p className="truncate text-sm font-semibold">
-                                {track.name}
-                              </p>
-                              <p className="truncate text-xs text-paper-dim">
-                                {track.artists}
-                              </p>
-                            </div>
-                            <button
-                              type="button"
-                              className="btn-ghost px-3 py-1.5 text-sm"
-                              disabled={already || busy}
-                              onClick={() => nominate(track)}
-                            >
-                              {already ? "Added" : "Add"}
-                            </button>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
+                  </label>
+                  <label className="grid gap-1.5 text-sm text-paper-dim">
+                    Artist
+                    <input
+                      className="field"
+                      value={songArtist}
+                      onChange={(e) => setSongArtist(e.target.value)}
+                      placeholder="The Killers"
+                      required
+                      maxLength={200}
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    className="btn-primary justify-self-start"
+                    disabled={busy || !songTitle.trim() || !songArtist.trim()}
+                  >
+                    {busy ? "Adding…" : "Add custom song"}
+                  </button>
+                </form>
+              ) : null}
+            </div>
           </div>
 
           <div className="panel p-5 sm:p-6">
@@ -549,6 +579,18 @@ export function RoomClient({ code }: { code: string }) {
               ) : null}
               {state.songs.map((song) => (
                 <li key={song.id} className="flex items-center gap-3">
+                  {song.albumArt ? (
+                    <Image
+                      src={song.albumArt}
+                      alt=""
+                      width={44}
+                      height={44}
+                      className="h-11 w-11 shrink-0 rounded-lg object-cover"
+                      unoptimized
+                    />
+                  ) : (
+                    <div className="h-11 w-11 shrink-0 rounded-lg bg-ink-soft" />
+                  )}
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-semibold">{song.name}</p>
                     <p className="truncate text-sm text-paper-dim">
@@ -601,14 +643,28 @@ export function RoomClient({ code }: { code: string }) {
                   key={song.id}
                   className="panel flex flex-col gap-4 p-4 sm:flex-row sm:items-center"
                 >
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-semibold">{song.name}</p>
-                    <p className="truncate text-sm text-paper-dim">
-                      {song.artists}
-                      {summary
-                        ? ` · ${formatApproval(summary)}`
-                        : ""}
-                    </p>
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
+                    {song.albumArt ? (
+                      <Image
+                        src={song.albumArt}
+                        alt=""
+                        width={56}
+                        height={56}
+                        className="h-14 w-14 shrink-0 rounded-lg object-cover"
+                        unoptimized
+                      />
+                    ) : (
+                      <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-ink-soft text-paper-dim">
+                        ♪
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <p className="truncate font-semibold">{song.name}</p>
+                      <p className="truncate text-sm text-paper-dim">
+                        {song.artists}
+                        {summary ? ` · ${formatApproval(summary)}` : ""}
+                      </p>
+                    </div>
                   </div>
                   <div className="flex w-full gap-2 sm:w-auto sm:min-w-[280px]">
                     {(
