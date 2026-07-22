@@ -29,8 +29,10 @@ This repo includes a full [`render.yaml`](./render.yaml):
 1. Push this branch to GitHub
 2. [Render Dashboard](https://dashboard.render.com) → **New** → **Blueprint**
 3. Select the repo / `cursor/manual-playlist-ba17` branch
-4. Apply the Blueprint
-5. After first deploy, set `NEXT_PUBLIC_APP_URL` to your `https://….onrender.com` URL (optional but useful)
+4. Apply the Blueprint (free web + free Postgres — no preview environments; those need Pro)
+5. After first deploy, optionally set `NEXT_PUBLIC_APP_URL` to your `https://….onrender.com` URL in the service env vars
+
+> Only **one** free Postgres database is allowed per Render workspace. If Apply fails because a free DB already exists, delete/upgrade the old one or reuse it.
 
 On each start (free tier has no pre-deploy step), the service runs:
 
