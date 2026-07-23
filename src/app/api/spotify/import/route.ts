@@ -13,7 +13,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error:
-          "Add SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET on Netlify to import playlists. Free Spotify Developer app — see README.",
+          "Add SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET on Render to import playlists. Free Spotify Developer app — see README.",
         needsSpotify: true,
       },
       { status: 400 },

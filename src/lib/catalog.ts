@@ -3,10 +3,11 @@ import { db } from "../../db";
 import { catalogTracks } from "../../db/schema";
 import { CATALOG_SEED, type CatalogTrack } from "./catalog-data";
 import { searchItunes } from "./itunes";
+import { searchSpotifyCatalog, spotifyConfigured } from "./spotify";
 
 export type { CatalogTrack };
 
-export type CatalogSearchSource = "itunes" | "database" | "seed";
+export type CatalogSearchSource = "spotify" | "itunes" | "database" | "seed";
 
 function mapRow(row: typeof catalogTracks.$inferSelect): CatalogTrack {
   return {
@@ -22,7 +23,7 @@ function mapRow(row: typeof catalogTracks.$inferSelect): CatalogTrack {
   };
 }
 
-/** In-memory fallback when DB / iTunes aren't available. */
+/** In-memory fallback when DB / Spotify / iTunes aren't available. */
 function searchSeed(query: string, limit: number): CatalogTrack[] {
   const q = query.trim().toLowerCase();
   const rows = !q
@@ -104,7 +105,7 @@ async function searchLocalDatabase(
 /**
  * Search songs for nomination.
  * - Empty query: browse local Render DB catalog (or seed).
- * - With query: iTunes Search API first (no key), then local fallback.
+ * - With query: Spotify (primary) → iTunes (backup) → local catalog.
  */
 export async function searchCatalog(
   query: string,
@@ -113,13 +114,30 @@ export async function searchCatalog(
   const q = query.trim();
 
   if (q) {
+    if (spotifyConfigured()) {
+      try {
+        const spotify = await searchSpotifyCatalog(q, limit);
+        if (spotify.length > 0) {
+          return { tracks: spotify, source: "spotify" };
+        }
+      } catch (err) {
+        console.error(
+          "Spotify search failed, falling back to iTunes",
+          err,
+        );
+      }
+    }
+
     try {
       const itunes = await searchItunes(q, limit);
       if (itunes.length > 0) {
         return { tracks: itunes, source: "itunes" };
       }
     } catch (err) {
-      console.error("iTunes search failed, falling back to local catalog", err);
+      console.error(
+        "iTunes search failed, falling back to local catalog",
+        err,
+      );
     }
   }
 

@@ -16,7 +16,7 @@ services:
     runtime: node
     region: oregon
     plan: free
-    branch: cursor/manual-playlist-ba17
+    branch: cursor/spotify-primary-search-ba17
     autoDeployTrigger: commit
     # Free tier: no preDeployCommand.
     # Migrate during build (DB is available). Start Next immediately on boot;
@@ -31,3 +31,10 @@ services:
         fromDatabase:
           name: okaylist-db
           property: connectionString
+      # Set these in the Render Dashboard (Blueprint prompts for sync:false keys)
+      - key: NEXT_PUBLIC_APP_URL
+        sync: false
+      - key: SPOTIFY_CLIENT_ID
+        sync: false
+      - key: SPOTIFY_CLIENT_SECRET
+        sync: false

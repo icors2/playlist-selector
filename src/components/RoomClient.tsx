@@ -56,7 +56,7 @@ export function RoomClient({ code }: { code: string }) {
   const [query, setQuery] = useState("");
   const [catalog, setCatalog] = useState<CatalogTrack[]>([]);
   const [catalogSource, setCatalogSource] = useState<
-    "itunes" | "database" | "seed" | null
+    "spotify" | "itunes" | "database" | "seed" | null
   >(null);
   const [searching, setSearching] = useState(false);
   const [newSongIds, setNewSongIds] = useState<Set<string>>(new Set());
@@ -152,7 +152,7 @@ export function RoomClient({ code }: { code: string }) {
       try {
         const { data } = await fetchJson<{
           tracks?: CatalogTrack[];
-          source?: "itunes" | "database" | "seed" | null;
+          source?: "spotify" | "itunes" | "database" | "seed" | null;
         }>(`/api/catalog/search?q=${encodeURIComponent(query)}`, {
           signal: controller.signal,
         });
@@ -489,7 +489,7 @@ export function RoomClient({ code }: { code: string }) {
 
       {state.room.storage === "memory" ? (
         <p className="mt-4 rounded-2xl border border-amber/30 bg-amber/10 px-4 py-3 text-sm text-amber">
-          Temporary memory storage — deploy to Netlify for a shared database.
+          Temporary memory storage — set DATABASE_URL (Render Postgres) for a shared database.
         </p>
       ) : null}
 
@@ -541,9 +541,9 @@ export function RoomClient({ code }: { code: string }) {
           <div className="panel p-5 sm:p-6">
             <h2 className="font-display text-2xl font-bold">Nominate songs</h2>
             <p className="mt-1 text-sm text-paper-dim">
-              Search Apple’s iTunes catalog (free, no login). You can keep
-              adding songs after voting starts — the list updates live for
-              everyone.
+              Search Spotify first (falls back to iTunes if Spotify is down).
+              You can keep adding songs after voting starts — the list updates
+              live for everyone.
             </p>
 
             <input
@@ -554,11 +554,13 @@ export function RoomClient({ code }: { code: string }) {
             />
             {catalogSource ? (
               <p className="mt-2 text-xs text-paper-dim">
-                {catalogSource === "itunes"
-                  ? "Results from iTunes Search"
-                  : catalogSource === "database"
-                    ? "Results from local catalog"
-                    : "Built-in catalog"}
+                {catalogSource === "spotify"
+                  ? "Results from Spotify"
+                  : catalogSource === "itunes"
+                    ? "Results from iTunes (Spotify unavailable)"
+                    : catalogSource === "database"
+                      ? "Results from local catalog"
+                      : "Built-in catalog"}
                 {searching ? " · searching…" : ""}
               </p>
             ) : null}
@@ -823,8 +825,8 @@ export function RoomClient({ code }: { code: string }) {
             <div className="panel h-fit p-5 sm:p-6 lg:sticky lg:top-6">
               <h2 className="font-display text-2xl font-bold">Add songs</h2>
               <p className="mt-1 text-sm text-paper-dim">
-                Keep nominating while others vote. New tracks land in the list
-                within a couple seconds.
+                Spotify search with iTunes backup. New tracks land in the vote
+                list within a couple seconds.
               </p>
 
               <input
@@ -835,11 +837,13 @@ export function RoomClient({ code }: { code: string }) {
               />
               {catalogSource ? (
                 <p className="mt-2 text-xs text-paper-dim">
-                  {catalogSource === "itunes"
-                    ? "Results from iTunes Search"
-                    : catalogSource === "database"
-                      ? "Results from local catalog"
-                      : "Built-in catalog"}
+                  {catalogSource === "spotify"
+                    ? "Results from Spotify"
+                    : catalogSource === "itunes"
+                      ? "Results from iTunes (Spotify unavailable)"
+                      : catalogSource === "database"
+                        ? "Results from local catalog"
+                        : "Built-in catalog"}
                   {searching ? " · searching…" : ""}
                 </p>
               ) : null}

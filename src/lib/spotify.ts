@@ -1,4 +1,9 @@
-import { DEMO_TRACKS, searchDemoTracks, type TrackResult } from "./demo-tracks";
+import type { CatalogTrack } from "./catalog-data";
+import {
+  DEMO_TRACKS,
+  searchDemoTracks,
+  type TrackResult,
+} from "./demo-tracks";
 
 const SPOTIFY_ACCOUNTS = "https://accounts.spotify.com";
 const SPOTIFY_API = "https://api.spotify.com/v1";
@@ -78,39 +83,111 @@ function mapTrack(track: {
   };
 }
 
-export async function searchTracks(query: string): Promise<{
-  tracks: TrackResult[];
-  demo: boolean;
-}> {
+type SpotifySearchItem = {
+  id: string;
+  name: string;
+  artists: { name: string }[];
+  album?: {
+    name?: string;
+    release_date?: string;
+    images?: { url: string }[];
+  };
+  preview_url: string | null;
+  duration_ms: number;
+  uri: string;
+};
+
+function yearFromReleaseDate(date: string | undefined): number | null {
+  if (!date) return null;
+  const year = Number(date.slice(0, 4));
+  return Number.isFinite(year) ? year : null;
+}
+
+/**
+ * Spotify Search via Client Credentials (no user login).
+ * Throws when credentials are missing or the API fails — callers can fall back.
+ */
+export async function searchSpotifyCatalog(
+  query: string,
+  limit = 20,
+): Promise<CatalogTrack[]> {
+  const term = query.trim();
+  if (!term) return [];
+
   const token = await getAppAccessToken();
   if (!token) {
-    return { tracks: searchDemoTracks(query), demo: true };
+    throw new Error("Spotify credentials are not configured");
   }
 
   const params = new URLSearchParams({
-    q: query || "party hits",
+    q: term,
     type: "track",
-    limit: "12",
+    limit: String(Math.min(50, Math.max(1, limit))),
   });
 
   const res = await fetch(`${SPOTIFY_API}/search?${params}`, {
     headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(8000),
     cache: "no-store",
   });
 
   if (!res.ok) {
-    console.error("Spotify search error", await res.text());
-    return { tracks: searchDemoTracks(query), demo: true };
+    const body = await res.text().catch(() => "");
+    throw new Error(`Spotify search failed (${res.status}) ${body.slice(0, 120)}`);
   }
 
   const data = (await res.json()) as {
-    tracks?: { items: Parameters<typeof mapTrack>[0][] };
+    tracks?: { items?: SpotifySearchItem[] };
   };
 
-  return {
-    tracks: (data.tracks?.items ?? []).map(mapTrack),
-    demo: false,
-  };
+  const seen = new Set<string>();
+  const tracks: CatalogTrack[] = [];
+  for (const track of data.tracks?.items ?? []) {
+    if (!track?.id || !track.name) continue;
+    const artists = (track.artists ?? []).map((a) => a.name).join(", ");
+    const key = `${track.name.toLowerCase()}::${artists.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    tracks.push({
+      id: `spotify-${track.id}`,
+      title: track.name,
+      artists,
+      album: track.album?.name ?? null,
+      year: yearFromReleaseDate(track.album?.release_date),
+      genre: null,
+      albumArt:
+        track.album?.images?.[1]?.url ?? track.album?.images?.[0]?.url ?? null,
+      durationMs: track.duration_ms ?? 0,
+      // Bare Spotify track id — used for playlist export.
+      externalId: track.id,
+      previewUrl: track.preview_url,
+    });
+  }
+  return tracks;
+}
+
+export async function searchTracks(query: string): Promise<{
+  tracks: TrackResult[];
+  demo: boolean;
+}> {
+  try {
+    const catalog = await searchSpotifyCatalog(query || "party hits", 12);
+    return {
+      tracks: catalog.map((t) => ({
+        id: t.externalId ?? t.id,
+        name: t.title,
+        artists: t.artists,
+        albumArt: t.albumArt,
+        previewUrl: t.previewUrl ?? null,
+        durationMs: t.durationMs,
+        uri: t.externalId ? `spotify:track:${t.externalId}` : t.id,
+      })),
+      demo: false,
+    };
+  } catch (err) {
+    console.error("Spotify search error", err);
+    return { tracks: searchDemoTracks(query), demo: true };
+  }
 }
 
 export function getSpotifyAuthUrl(state: string, redirectUri: string) {
@@ -198,7 +275,7 @@ export async function fetchPlaylistTracks(playlistUrlOrId: string): Promise<
   if (!spotifyConfigured()) {
     return {
       error:
-        "Spotify API keys are required to import a playlist. Add SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET on Netlify.",
+        "Spotify API keys are required to import a playlist. Add SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET on Render.",
     };
   }
 
