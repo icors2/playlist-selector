@@ -1,6 +1,16 @@
 # Okaylist — Render Blueprint (free tier)
 # Dashboard: New → Blueprint → connect this repo / branch
 # Docs: https://render.com/docs/blueprint-spec
+#
+# Spotify Developer Dashboard → Redirect URIs (exact match):
+#   https://<your-service>.onrender.com/api/spotify/export
+#   http://localhost:3000/api/spotify/export   (local only)
+#
+# Env vars to set in Render (sync: false below):
+#   NEXT_PUBLIC_APP_URL      = https://<your-service>.onrender.com
+#   SPOTIFY_CLIENT_ID        = from Spotify Dashboard
+#   SPOTIFY_CLIENT_SECRET    = from Spotify Dashboard
+# DATABASE_URL is wired automatically from okaylist-db.
 
 databases:
   - name: okaylist-db
@@ -31,7 +41,6 @@ services:
         fromDatabase:
           name: okaylist-db
           property: connectionString
-      # Set these in the Render Dashboard (Blueprint prompts for sync:false keys)
       - key: NEXT_PUBLIC_APP_URL
         sync: false
       - key: SPOTIFY_CLIENT_ID
