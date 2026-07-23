@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { importPlaylistTracks } from "@/lib/rooms";
-import { fetchPlaylistTracks, spotifyConfigured } from "@/lib/spotify";
+import {
+  fetchPlaylistTracks,
+  parsePlaylistId,
+  spotifyConfigured,
+} from "@/lib/spotify";
 
 const schema = z.object({
   code: z.string().min(4).max(8),
@@ -31,14 +35,40 @@ export async function POST(request: Request) {
 
   try {
     const body = schema.parse(await request.json());
-    const playlist = await fetchPlaylistTracks(body.playlistUrl);
-    if ("error" in playlist) {
-      return NextResponse.json({ error: playlist.error }, { status: 400 });
-    }
+    const fetched = await fetchPlaylistTracks(body.playlistUrl);
 
-    if (playlist.tracks.length === 0) {
+    // Client Credentials can't read private/blank playlists — still link by URL
+    // so OAuth export can write winners into a playlist the host owns.
+    const playlist =
+      "error" in fetched
+        ? (() => {
+            const id = parsePlaylistId(body.playlistUrl);
+            if (!id) return null;
+            return {
+              id,
+              url: `https://open.spotify.com/playlist/${id}`,
+              name: "Linked Spotify playlist",
+              tracks: [] as {
+                id: string;
+                name: string;
+                artists: string;
+                albumArt: string | null;
+                previewUrl: string | null;
+                durationMs: number;
+              }[],
+              linkedByUrlOnly: true as const,
+            };
+          })()
+        : { ...fetched, linkedByUrlOnly: false as const };
+
+    if (!playlist) {
       return NextResponse.json(
-        { error: "That playlist has no tracks to import." },
+        {
+          error:
+            "error" in fetched
+              ? fetched.error
+              : "That doesn’t look like a Spotify playlist link.",
+        },
         { status: 400 },
       );
     }
@@ -59,7 +89,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: result.error }, { status: 400 });
     }
 
-    return NextResponse.json(result);
+    return NextResponse.json({
+      ...result,
+      linkedByUrlOnly: playlist.linkedByUrlOnly,
+    });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: "Invalid request" }, { status: 400 });

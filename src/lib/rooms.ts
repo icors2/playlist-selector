@@ -279,9 +279,10 @@ export async function importPlaylistTracks(options: {
   if (room.hostToken !== options.hostToken) {
     return { error: "Only the host can import a playlist" as const };
   }
-  if (room.phase !== "lobby" && room.phase !== "nominate") {
+  // Link/import before voting, or link during results so export can update it.
+  if (room.phase === "vote") {
     return {
-      error: "Playlists can only be imported before voting starts" as const,
+      error: "Pause voting (or finish) before changing the linked playlist" as const,
     };
   }
 
@@ -290,13 +291,33 @@ export async function importPlaylistTracks(options: {
     return { error: "Join the room first" as const };
   }
 
+  const nextPhase =
+    room.phase === "lobby"
+      ? ("nominate" as const)
+      : room.phase;
+
   await updateRoom({
     ...room,
-    name: room.name === "Group playlist" ? options.playlist.name : room.name,
+    name:
+      room.name === "Group playlist" && options.playlist.tracks.length > 0
+        ? options.playlist.name
+        : room.name,
     spotifyPlaylistId: options.playlist.id,
     spotifyPlaylistUrl: options.playlist.url,
-    phase: room.phase === "lobby" ? "nominate" : room.phase,
+    phase: nextPhase,
   });
+
+  // During results we only link the playlist for export (no new nominations).
+  if (room.phase === "results") {
+    return {
+      added: 0,
+      skipped: 0,
+      total: options.playlist.tracks.length,
+      playlistName: options.playlist.name,
+      playlistUrl: options.playlist.url,
+      linkedOnly: true as const,
+    };
+  }
 
   const existing = await listSongs(room.id);
   const existingIds = new Set(existing.map((s) => s.spotifyTrackId));
@@ -330,6 +351,7 @@ export async function importPlaylistTracks(options: {
     total: options.playlist.tracks.length,
     playlistName: options.playlist.name,
     playlistUrl: options.playlist.url,
+    linkedOnly: options.playlist.tracks.length === 0,
   };
 }
 

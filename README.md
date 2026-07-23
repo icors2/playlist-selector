@@ -57,9 +57,18 @@ bash scripts/start.sh
 
 > Free Render Postgres expires after 30 days of inactivity on free plans.
 
-## How voting works
+## How a session works (Spotify playlist update)
 
-With `N` people in the room, a song needs `ceil(N × 0.8)` Love/Okay votes to make the playlist. Nominations stay open during voting — new songs show up live (~1.5s poll).
+1. Host creates a room  
+2. Host pastes a Spotify playlist they **own** (blank is fine) → **Link playlist & start**  
+3. Group nominates via Spotify search (iTunes is backup only) and votes  
+4. Host opens results → **Update Spotify playlist** → Spotify OAuth → winners overwrite that playlist  
+
+Also available: **Copy playlist text** as a manual fallback.
+
+With `N` people in the room, a song needs `ceil(N × 0.8)` Love/Okay votes. Nominations stay open during voting (~1.5s live poll).
+
+> Prefer Spotify search results (not iTunes/manual) for tracks you want written back — export only sends real Spotify track IDs.
 
 ## Local development
 

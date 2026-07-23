@@ -240,6 +240,13 @@ export async function exchangeCodeForTokens(
   return { accessToken: data.access_token, refreshToken: data.refresh_token };
 }
 
+/** True for bare Spotify track ids (not itunes:/manual: prefixed). */
+export function isSpotifyTrackId(id: string | null | undefined): id is string {
+  if (!id) return false;
+  if (id.includes(":")) return false;
+  return /^[0-9A-Za-z]{10,30}$/.test(id);
+}
+
 /** Extract a Spotify playlist ID from a URL, URI, or raw ID. */
 export function parsePlaylistId(input: string): string | null {
   const value = input.trim();

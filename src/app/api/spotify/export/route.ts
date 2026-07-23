@@ -6,6 +6,7 @@ import {
   createSpotifyPlaylist,
   exchangeCodeForTokens,
   getSpotifyAuthUrl,
+  isSpotifyTrackId,
   spotifyConfigured,
 } from "@/lib/spotify";
 
@@ -107,12 +108,22 @@ export async function GET(request: Request) {
       roomState.participants.length,
     );
 
+    const trackIds = consensus.playlist
+      .map((s) => s.spotifyTrackId)
+      .filter(isSpotifyTrackId);
+
+    if (trackIds.length === 0) {
+      return NextResponse.redirect(
+        `${appBase}/room/${parsed.code}?spotify=no_spotify_tracks`,
+      );
+    }
+
     const playlist = await createSpotifyPlaylist({
       accessToken: tokens.accessToken,
       name: roomState.room.name,
-      description: `Built with Okaylist — songs everyone was okay with. Room ${roomState.room.code}.`,
-      trackIds: consensus.playlist.map((s) => s.spotifyTrackId),
-      // Rewrite the group's existing playlist when one was imported.
+      description: `Built with Okaylist — songs the group approved. Room ${roomState.room.code}.`,
+      trackIds,
+      // Rewrite the group's existing playlist when one was linked/imported.
       existingPlaylistId: roomState.room.spotifyPlaylistId,
     });
 

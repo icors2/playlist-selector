@@ -61,6 +61,11 @@ export function RoomClient({ code }: { code: string }) {
   const [searching, setSearching] = useState(false);
   const [newSongIds, setNewSongIds] = useState<Set<string>>(new Set());
   const [showAddDuringVote, setShowAddDuringVote] = useState(true);
+  const [playlistUrl, setPlaylistUrl] = useState(
+    "https://open.spotify.com/playlist/7wAOTTNJOMAGLNPq537v5a",
+  );
+  const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [spotifyReady, setSpotifyReady] = useState<boolean | null>(null);
   const seenSongIdsRef = useRef<Set<string>>(new Set());
   const hasLoadedRef = useRef(false);
 
@@ -110,7 +115,28 @@ export function RoomClient({ code }: { code: string }) {
     let alive = true;
     async function boot() {
       try {
+        const params = new URLSearchParams(window.location.search);
+        const spotifyStatus = params.get("spotify");
+        if (spotifyStatus === "success") {
+          setImportMessage("Spotify playlist updated with the winning songs.");
+        } else if (spotifyStatus === "denied") {
+          setError("Spotify authorization was denied.");
+        } else if (spotifyStatus === "no_spotify_tracks") {
+          setError(
+            "No Spotify track IDs to export — nominate via Spotify search (not iTunes/manual) so winners can be written back.",
+          );
+        } else if (spotifyStatus === "error") {
+          setError("Could not update Spotify playlist. Try again.");
+        }
+        if (spotifyStatus) {
+          window.history.replaceState({}, "", `/room/${roomCode}`);
+        }
+
         await refresh();
+        const { data: status } = await fetchJson<{ configured?: boolean }>(
+          "/api/spotify/status",
+        );
+        if (alive) setSpotifyReady(Boolean(status.configured));
       } catch (err) {
         if (alive) {
           setError(err instanceof Error ? err.message : "Failed to load room");
@@ -139,7 +165,7 @@ export function RoomClient({ code }: { code: string }) {
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onVisible);
     };
-  }, [refresh]);
+  }, [refresh, roomCode]);
 
   const canAddSongs =
     state?.room.phase === "nominate" || state?.room.phase === "vote";
@@ -341,6 +367,68 @@ export function RoomClient({ code }: { code: string }) {
     window.setTimeout(() => setCopied(false), 1600);
   }
 
+  async function exportPlaylist() {
+    setBusy(true);
+    setError(null);
+    try {
+      const { res, data } = await fetchJson<{ url?: string; error?: string }>(
+        "/api/spotify/export",
+        {
+          method: "POST",
+          headers: authHeaders(roomCode),
+          body: JSON.stringify({ code: roomCode }),
+        },
+      );
+      if (!res.ok || !data.url) {
+        throw new Error(data.error || "Export failed");
+      }
+      window.location.href = data.url;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Export failed");
+      setBusy(false);
+    }
+  }
+
+  async function importPlaylist(e?: FormEvent) {
+    e?.preventDefault();
+    setBusy(true);
+    setImportMessage(null);
+    setError(null);
+    try {
+      const { res, data } = await fetchJson<{
+        added?: number;
+        skipped?: number;
+        playlistName?: string;
+        linkedOnly?: boolean;
+        error?: string;
+      }>("/api/spotify/import", {
+        method: "POST",
+        headers: authHeaders(roomCode),
+        body: JSON.stringify({
+          code: roomCode,
+          playlistUrl: playlistUrl.trim(),
+        }),
+      });
+      if (!res.ok) throw new Error(data.error || "Import failed");
+      if (data.linkedOnly || data.added === 0) {
+        setImportMessage(
+          `Linked “${data.playlistName ?? "playlist"}” — winners will write to this Spotify playlist.`,
+        );
+      } else {
+        setImportMessage(
+          `Imported ${data.added} songs` +
+            (data.skipped ? ` (${data.skipped} already on the list)` : "") +
+            ` from “${data.playlistName}”.`,
+        );
+      }
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Import failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function copyWinningList() {
     if (!state) return;
     const lines = state.consensus.playlist.map(
@@ -511,26 +599,62 @@ export function RoomClient({ code }: { code: string }) {
         <section className="panel mt-10 p-6 sm:p-8 animate-rise-delay-2">
           <h2 className="font-display text-2xl font-bold">Waiting room</h2>
           <p className="mt-2 max-w-xl text-paper-dim">
-            Share the code. Search the song database to nominate tracks people
-            recognize, then vote. A song makes the playlist when at least{" "}
-            <span className="text-paper">80% of the group</span> marks it Love
-            or Okay — then copy the winners into Spotify by hand.
+            Share the code. Link a Spotify playlist you own (blank is fine) —
+            after voting, Okaylist can write the winners back to it. Songs need{" "}
+            <span className="text-paper">80% Love/Okay</span> approvals.
           </p>
           <p className="mt-6 font-display text-5xl tracking-[0.25em] text-amber">
             {roomCode}
           </p>
+
           {state.isHost ? (
-            <button
-              type="button"
-              className="btn-primary mt-8"
-              disabled={busy}
-              onClick={() => setPhase("nominate")}
-            >
-              Start nominations
-            </button>
+            <form className="mt-8 grid gap-3" onSubmit={importPlaylist}>
+              <label className="grid gap-1.5 text-sm text-paper-dim">
+                Your Spotify playlist (owned by you)
+                <input
+                  className="field text-sm"
+                  value={playlistUrl}
+                  onChange={(e) => setPlaylistUrl(e.target.value)}
+                  placeholder="https://open.spotify.com/playlist/…"
+                  inputMode="url"
+                />
+              </label>
+              {spotifyReady === false ? (
+                <p className="text-xs text-amber">
+                  Add SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET on Render, plus
+                  redirect URI{" "}
+                  <code className="text-[11px]">
+                    /api/spotify/export
+                  </code>
+                  .
+                </p>
+              ) : spotifyReady ? (
+                <p className="text-xs text-foam">Spotify API connected.</p>
+              ) : null}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  disabled={busy || !playlistUrl.trim() || spotifyReady === false}
+                >
+                  {busy ? "Linking…" : "Link playlist & start"}
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  disabled={busy}
+                  onClick={() => setPhase("nominate")}
+                >
+                  Skip — nominate without linking
+                </button>
+              </div>
+              {importMessage ? (
+                <p className="text-sm text-foam">{importMessage}</p>
+              ) : null}
+            </form>
           ) : (
             <p className="mt-4 text-sm text-paper-dim">
-              Waiting for the host to start nominations…
+              Waiting for the host to link a playlist or start nominations…
             </p>
           )}
         </section>
@@ -542,15 +666,57 @@ export function RoomClient({ code }: { code: string }) {
             <h2 className="font-display text-2xl font-bold">Nominate songs</h2>
             <p className="mt-1 text-sm text-paper-dim">
               Search Spotify first (falls back to iTunes if Spotify is down).
-              You can keep adding songs after voting starts — the list updates
-              live for everyone.
+              Prefer Spotify results so winners can be written back to your
+              playlist. You can keep adding after voting starts.
             </p>
+
+            {state.isHost ? (
+              <form
+                className="mt-4 grid gap-2 border-b border-[var(--line)] pb-4"
+                onSubmit={importPlaylist}
+              >
+                <label className="grid gap-1.5 text-sm text-paper-dim">
+                  Link / import Spotify playlist
+                  <input
+                    className="field text-sm"
+                    value={playlistUrl}
+                    onChange={(e) => setPlaylistUrl(e.target.value)}
+                    placeholder="https://open.spotify.com/playlist/…"
+                    inputMode="url"
+                  />
+                </label>
+                <button
+                  type="submit"
+                  className="btn-ghost justify-self-start px-4 py-2 text-sm"
+                  disabled={busy || !playlistUrl.trim() || spotifyReady === false}
+                >
+                  {busy ? "Working…" : "Link / import playlist"}
+                </button>
+                {importMessage ? (
+                  <p className="text-sm text-foam">{importMessage}</p>
+                ) : null}
+                {state.room.spotifyPlaylistUrl ? (
+                  <p className="text-xs text-paper-dim">
+                    Linked:{" "}
+                    <a
+                      className="text-amber underline"
+                      href={state.room.spotifyPlaylistUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      open in Spotify
+                    </a>
+                    . Export will update this list.
+                  </p>
+                ) : null}
+              </form>
+            ) : null}
 
             <input
               className="field mt-4"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search songs or artists…"
+              placeholder="Search Spotify…"
             />
             {catalogSource ? (
               <p className="mt-2 text-xs text-paper-dim">
@@ -962,19 +1128,89 @@ export function RoomClient({ code }: { code: string }) {
                 </h2>
                 <p className="mt-2 max-w-xl text-paper-dim">
                   {state.consensus.playlist.length} songs hit 80% approval
-                  ({requiredApprovals}+ of {state.participants.length}). Copy
-                  the list and add them to Spotify yourself.
+                  ({requiredApprovals}+ of {state.participants.length}).
+                  {state.room.spotifyPlaylistId
+                    ? " Update will rewrite your linked Spotify playlist with these winners."
+                    : " Link a Spotify playlist you own, then update it — or copy the text."}
                 </p>
               </div>
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={copyWinningList}
-                disabled={state.consensus.playlist.length === 0}
-              >
-                {listCopied ? "Copied" : "Copy playlist text"}
-              </button>
+              <div className="flex flex-wrap gap-2">
+                {state.room.spotifyPlaylistUrl ? (
+                  <a
+                    className="btn-ghost"
+                    href={state.room.spotifyPlaylistUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Open in Spotify
+                  </a>
+                ) : null}
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={copyWinningList}
+                  disabled={state.consensus.playlist.length === 0}
+                >
+                  {listCopied ? "Copied" : "Copy playlist text"}
+                </button>
+                {state.isHost ? (
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={
+                      busy ||
+                      state.consensus.playlist.length === 0 ||
+                      spotifyReady === false
+                    }
+                    onClick={exportPlaylist}
+                  >
+                    {state.room.spotifyPlaylistId
+                      ? "Update Spotify playlist"
+                      : "Export to Spotify"}
+                  </button>
+                ) : !state.room.spotifyPlaylistUrl ? (
+                  <p className="text-sm text-paper-dim">
+                    Waiting for host to export…
+                  </p>
+                ) : null}
+              </div>
             </div>
+
+            {state.isHost && !state.room.spotifyPlaylistId ? (
+              <form
+                className="mt-6 grid gap-2 border-t border-[var(--line)] pt-4"
+                onSubmit={importPlaylist}
+              >
+                <label className="grid gap-1.5 text-sm text-paper-dim">
+                  Link a Spotify playlist you own (blank OK), then Update
+                  <input
+                    className="field text-sm"
+                    value={playlistUrl}
+                    onChange={(e) => setPlaylistUrl(e.target.value)}
+                    placeholder="https://open.spotify.com/playlist/…"
+                    inputMode="url"
+                  />
+                </label>
+                <button
+                  type="submit"
+                  className="btn-ghost justify-self-start px-4 py-2 text-sm"
+                  disabled={busy || !playlistUrl.trim() || spotifyReady === false}
+                >
+                  {busy ? "Linking…" : "Link playlist"}
+                </button>
+              </form>
+            ) : null}
+
+            {importMessage ? (
+              <p className="mt-4 text-sm text-foam">{importMessage}</p>
+            ) : null}
+
+            {spotifyReady === false ? (
+              <p className="mt-4 text-sm text-amber">
+                Spotify env vars missing on Render — search may use iTunes
+                backup, and playlist update will stay unavailable.
+              </p>
+            ) : null}
 
             <ol className="mt-8 grid gap-3">
               {state.consensus.playlist.length === 0 ? (
@@ -993,6 +1229,10 @@ export function RoomClient({ code }: { code: string }) {
                     <p className="truncate font-semibold">{song.name}</p>
                     <p className="truncate text-sm text-paper-dim">
                       {song.artists}
+                      {!song.spotifyTrackId ||
+                      song.spotifyTrackId.includes(":")
+                        ? " · not a Spotify track id"
+                        : ""}
                     </p>
                   </div>
                   <p className="shrink-0 text-sm text-foam">
