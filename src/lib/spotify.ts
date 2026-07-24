@@ -57,6 +57,8 @@ export function spotifyRedirectUri(request: Request): string {
 }
 
 export const SPOTIFY_REDIRECT_COOKIE = "spotify_oauth_redirect";
+/** OAuth `state` payload for the same-origin authorize hop. */
+export const SPOTIFY_STATE_COOKIE = "spotify_oauth_state";
 
 async function getAppAccessToken(): Promise<string | null> {
   if (!spotifyConfigured()) return null;

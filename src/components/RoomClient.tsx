@@ -12,7 +12,7 @@ import {
 } from "react";
 import { fetchJson } from "@/lib/api";
 import { formatApproval, myVote } from "@/lib/consensus";
-import { authHeaders } from "@/lib/session";
+import { authHeaders, getStoredTokens } from "@/lib/session";
 import type { CatalogTrack } from "@/lib/catalog-data";
 import type { RoomStateResponse } from "@/lib/types";
 import type { VoteValue } from "@/lib/models";
@@ -386,25 +386,58 @@ export function RoomClient({ code }: { code: string }) {
   async function exportPlaylist() {
     setBusy(true);
     setError(null);
-    setImportMessage("Opening Spotify so you can Agree / confirm access…");
+    setImportMessage("Connecting to Spotify — you should see the Agree screen next…");
+
+    const { hostToken } = getStoredTokens(roomCode);
+    if (!hostToken) {
+      setImportMessage(null);
+      setError(
+        "Host session missing on this device. Open the room from the browser where you created it, then try again.",
+      );
+      setBusy(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 20_000);
+
     try {
-      const { res, data } = await fetchJson<{ url?: string; error?: string }>(
+      const { res, data } = await fetchJson<{
+        next?: string;
+        url?: string;
+        error?: string;
+      }>(
         "/api/spotify/export",
         {
           method: "POST",
           headers: authHeaders(roomCode),
           body: JSON.stringify({ code: roomCode }),
+          signal: controller.signal,
         },
+        { retries: 2, retryDelayMs: 800 },
       );
-      if (!res.ok || !data.url) {
+      if (!res.ok) {
         throw new Error(data.error || "Export failed");
       }
-      // Full navigation to Spotify's Agree screen.
-      window.location.assign(data.url);
+
+      // Prefer same-origin hop (sets cookies, then 302 → Spotify).
+      const target = data.next || data.url;
+      if (!target) {
+        throw new Error("Export failed — no Spotify URL returned");
+      }
+
+      setImportMessage("Redirecting to Spotify…");
+      window.location.assign(target);
     } catch (err) {
       setImportMessage(null);
-      setError(err instanceof Error ? err.message : "Export failed");
+      if (err instanceof DOMException && err.name === "AbortError") {
+        setError("Timed out connecting to Spotify. Wait a moment and try again.");
+      } else {
+        setError(err instanceof Error ? err.message : "Export failed");
+      }
       setBusy(false);
+    } finally {
+      window.clearTimeout(timer);
     }
   }
 
@@ -591,6 +624,15 @@ export function RoomClient({ code }: { code: string }) {
       {error ? (
         <p className="mt-4 text-sm text-[#f0a090]" role="alert">
           {error}
+        </p>
+      ) : null}
+
+      {importMessage ? (
+        <p
+          className="mt-4 rounded-xl border border-foam/40 bg-foam/10 px-3 py-2 text-sm text-foam"
+          role="status"
+        >
+          {importMessage}
         </p>
       ) : null}
 

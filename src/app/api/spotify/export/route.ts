@@ -12,6 +12,7 @@ import {
   spotifyConfigured,
   spotifyRedirectUri,
   SPOTIFY_REDIRECT_COOKIE,
+  SPOTIFY_STATE_COOKIE,
 } from "@/lib/spotify";
 
 const startSchema = z.object({
@@ -96,12 +97,25 @@ export async function POST(request: Request) {
     const redirect = spotifyRedirectUri(request);
     console.info("Spotify OAuth start", { redirectUri: redirect });
 
-    const url = getSpotifyAuthUrl(statePayload, redirect);
-    const response = NextResponse.json({ url });
+    // Client navigates same-origin to /authorize, which 302s to Spotify.
+    // Also return direct `url` as a fallback for older clients.
+    const authorizeUrl = getSpotifyAuthUrl(statePayload, redirect);
+    const response = NextResponse.json({
+      next: "/api/spotify/export/authorize",
+      url: authorizeUrl,
+    });
+    const secure = redirect.startsWith("https");
     response.cookies.set(SPOTIFY_REDIRECT_COOKIE, redirect, {
       httpOnly: true,
       sameSite: "lax",
-      secure: redirect.startsWith("https"),
+      secure,
+      path: "/",
+      maxAge: 600,
+    });
+    response.cookies.set(SPOTIFY_STATE_COOKIE, statePayload, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure,
       path: "/",
       maxAge: 600,
     });
