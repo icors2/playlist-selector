@@ -266,25 +266,35 @@ export async function searchSpotifyCatalog(
   const seen = new Set<string>();
   const tracks: CatalogTrack[] = [];
   for (const track of data.tracks?.items ?? []) {
-    if (!track?.id || !track.name) continue;
-    const artists = (track.artists ?? []).map((a) => a.name).join(", ");
-    const key = `${track.name.toLowerCase()}::${artists.toLowerCase()}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    tracks.push({
-      id: `spotify-${track.id}`,
-      title: track.name,
-      artists,
-      album: track.album?.name ?? null,
-      year: yearFromReleaseDate(track.album?.release_date),
-      genre: null,
-      albumArt:
-        track.album?.images?.[1]?.url ?? track.album?.images?.[0]?.url ?? null,
-      durationMs: track.duration_ms ?? 0,
-      // Bare Spotify track id — used for playlist export.
-      externalId: track.id,
-      previewUrl: track.preview_url,
-    });
+    try {
+      if (!track?.id || !track.name) continue;
+      const artists = (track.artists ?? [])
+        .map((a) => a?.name?.trim())
+        .filter((name): name is string => Boolean(name))
+        .join(", ");
+      if (!artists) continue;
+      const key = `${track.name.toLowerCase()}::${artists.toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      tracks.push({
+        id: `spotify-${track.id}`,
+        title: track.name,
+        artists,
+        album: track.album?.name ?? null,
+        year: yearFromReleaseDate(track.album?.release_date),
+        genre: null,
+        albumArt:
+          track.album?.images?.[1]?.url ??
+          track.album?.images?.[0]?.url ??
+          null,
+        durationMs: track.duration_ms ?? 0,
+        // Bare Spotify track id — used for playlist export.
+        externalId: track.id,
+        previewUrl: track.preview_url ?? null,
+      });
+    } catch (itemErr) {
+      console.error("Skipping malformed Spotify search item", itemErr);
+    }
   }
   return tracks;
 }
@@ -292,6 +302,7 @@ export async function searchSpotifyCatalog(
 export async function searchTracks(query: string): Promise<{
   tracks: TrackResult[];
   demo: boolean;
+  error?: string;
 }> {
   try {
     const catalog = await searchSpotifyCatalog(query || "party hits", 12);
@@ -309,7 +320,11 @@ export async function searchTracks(query: string): Promise<{
     };
   } catch (err) {
     console.error("Spotify search error", err);
-    return { tracks: searchDemoTracks(query), demo: true };
+    return {
+      tracks: searchDemoTracks(query),
+      demo: true,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 

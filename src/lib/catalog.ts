@@ -110,21 +110,41 @@ async function searchLocalDatabase(
 export async function searchCatalog(
   query: string,
   limit = 20,
-): Promise<{ tracks: CatalogTrack[]; source: CatalogSearchSource }> {
+): Promise<{
+  tracks: CatalogTrack[];
+  source: CatalogSearchSource;
+  spotifyError?: string;
+}> {
   const q = query.trim();
 
   if (q) {
     if (spotifyConfigured()) {
       try {
-        const spotify = await searchSpotifyCatalog(q, limit);
+        // Cap Spotify page size — large limits have been flaky with
+        // Client Credentials on some apps.
+        const spotify = await searchSpotifyCatalog(q, Math.min(limit, 20));
         if (spotify.length > 0) {
           return { tracks: spotify, source: "spotify" };
         }
       } catch (err) {
-        console.error(
-          "Spotify search failed, falling back to iTunes",
-          err,
-        );
+        const spotifyError =
+          err instanceof Error ? err.message : "Spotify search failed";
+        console.error("Spotify search failed, falling back to iTunes", err);
+
+        try {
+          const itunes = await searchItunes(q, limit);
+          if (itunes.length > 0) {
+            return { tracks: itunes, source: "itunes", spotifyError };
+          }
+        } catch (itunesErr) {
+          console.error(
+            "iTunes search failed, falling back to local catalog",
+            itunesErr,
+          );
+        }
+
+        const local = await searchLocalDatabase(query, limit);
+        return { ...local, spotifyError };
       }
     }
 
