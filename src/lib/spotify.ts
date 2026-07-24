@@ -566,11 +566,30 @@ export async function fetchPlaylistTracks(playlistUrlOrId: string): Promise<
   };
 }
 
+async function playlistTrackTotal(
+  accessToken: string,
+  playlistId: string,
+): Promise<number | null> {
+  const res = await fetch(
+    `${SPOTIFY_API}/playlists/${playlistId}/tracks?limit=1&fields=total`,
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: "no-store",
+    },
+  );
+  if (!res.ok) {
+    console.error("Spotify playlist total error", await res.text());
+    return null;
+  }
+  const data = (await res.json()) as { total?: number };
+  return typeof data.total === "number" ? data.total : null;
+}
+
 async function replacePlaylistTracks(
   accessToken: string,
   playlistId: string,
   trackIds: string[],
-) {
+): Promise<{ ok: boolean; error?: string; written?: number }> {
   const uris = trackIds.map((id) => `spotify:track:${id}`);
   // First page replaces; further pages append.
   const first = uris.slice(0, 100);
@@ -586,8 +605,12 @@ async function replacePlaylistTracks(
     },
   );
   if (!replaceRes.ok) {
-    console.error("Spotify replace tracks error", await replaceRes.text());
-    return false;
+    const body = await replaceRes.text();
+    console.error("Spotify replace tracks error", replaceRes.status, body);
+    return {
+      ok: false,
+      error: `Couldn’t update playlist (${replaceRes.status}). Log into the Spotify account that owns it.`,
+    };
   }
 
   for (let i = 100; i < uris.length; i += 100) {
@@ -604,11 +627,25 @@ async function replacePlaylistTracks(
       },
     );
     if (!addRes.ok) {
-      console.error("Spotify append tracks error", await addRes.text());
-      return false;
+      const body = await addRes.text();
+      console.error("Spotify append tracks error", addRes.status, body);
+      return {
+        ok: false,
+        error: `Wrote some tracks but append failed (${addRes.status}).`,
+      };
     }
   }
-  return true;
+
+  const total = await playlistTrackTotal(accessToken, playlistId);
+  if (total !== null && total < trackIds.length) {
+    return {
+      ok: false,
+      error: `Spotify reported ${total} tracks after write (expected ${trackIds.length}).`,
+      written: total,
+    };
+  }
+
+  return { ok: true, written: total ?? trackIds.length };
 }
 
 export async function createSpotifyPlaylist(options: {
@@ -618,26 +655,40 @@ export async function createSpotifyPlaylist(options: {
   trackIds: string[];
   /** When set, rewrite this existing playlist instead of creating a new one. */
   existingPlaylistId?: string | null;
-}): Promise<{ id: string; url: string; created: boolean } | null> {
+}): Promise<{
+  id: string;
+  url: string;
+  created: boolean;
+  trackCount: number;
+  error?: string;
+} | null> {
+  // Prefer the linked playlist — never silently write somewhere else.
   if (options.existingPlaylistId) {
-    const ok = await replacePlaylistTracks(
+    const result = await replacePlaylistTracks(
       options.accessToken,
       options.existingPlaylistId,
       options.trackIds,
     );
-    if (ok) {
+    if (!result.ok) {
+      console.warn(
+        "Spotify update of linked playlist failed",
+        options.existingPlaylistId,
+        result.error,
+      );
       return {
         id: options.existingPlaylistId,
         url: `https://open.spotify.com/playlist/${options.existingPlaylistId}`,
         created: false,
+        trackCount: result.written ?? 0,
+        error: result.error,
       };
     }
-    // Linked playlist may be owned by another account or unwritable —
-    // fall through and create a new playlist for this Spotify user.
-    console.warn(
-      "Spotify update of linked playlist failed; creating a new playlist",
-      options.existingPlaylistId,
-    );
+    return {
+      id: options.existingPlaylistId,
+      url: `https://open.spotify.com/playlist/${options.existingPlaylistId}`,
+      created: false,
+      trackCount: result.written ?? options.trackIds.length,
+    };
   }
 
   const meRes = await fetch(`${SPOTIFY_API}/me`, {
@@ -661,7 +712,7 @@ export async function createSpotifyPlaylist(options: {
     body: JSON.stringify({
       name: options.name,
       description: options.description,
-      public: true,
+      public: false,
     }),
   });
 
@@ -675,17 +726,26 @@ export async function createSpotifyPlaylist(options: {
     external_urls: { spotify: string };
   };
 
-  const ok = await replacePlaylistTracks(
+  const result = await replacePlaylistTracks(
     options.accessToken,
     playlist.id,
     options.trackIds,
   );
-  if (!ok && options.trackIds.length > 0) return null;
+  if (!result.ok && options.trackIds.length > 0) {
+    return {
+      id: playlist.id,
+      url: playlist.external_urls.spotify,
+      created: true,
+      trackCount: result.written ?? 0,
+      error: result.error,
+    };
+  }
 
   return {
     id: playlist.id,
     url: playlist.external_urls.spotify,
     created: true,
+    trackCount: result.written ?? options.trackIds.length,
   };
 }
 

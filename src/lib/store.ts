@@ -52,6 +52,8 @@ function mapParticipant(row: typeof participants.$inferSelect): Participant {
     roomId: row.roomId,
     name: row.name,
     token: row.token,
+    isReady: Boolean(row.isReady),
+    votingDone: Boolean(row.votingDone),
     createdAt:
       row.createdAt instanceof Date
         ? row.createdAt.toISOString()
@@ -150,7 +152,11 @@ export async function listParticipants(roomId?: string): Promise<Participant[]> 
 
 export async function insertParticipant(participant: Participant) {
   if (!db) {
-    memory().participants.push(participant);
+    memory().participants.push({
+      ...participant,
+      isReady: participant.isReady ?? false,
+      votingDone: participant.votingDone ?? false,
+    });
     return participant;
   }
   const [row] = await db
@@ -160,10 +166,44 @@ export async function insertParticipant(participant: Participant) {
       roomId: participant.roomId,
       name: participant.name,
       token: participant.token,
+      isReady: participant.isReady ?? false,
+      votingDone: participant.votingDone ?? false,
       createdAt: new Date(participant.createdAt),
     })
     .returning();
   return mapParticipant(row);
+}
+
+export async function updateParticipant(participant: Participant) {
+  if (!db) {
+    const store = memory();
+    const idx = store.participants.findIndex((p) => p.id === participant.id);
+    if (idx >= 0) store.participants[idx] = participant;
+    return participant;
+  }
+  const [row] = await db
+    .update(participants)
+    .set({
+      isReady: participant.isReady,
+      votingDone: participant.votingDone,
+    })
+    .where(eq(participants.id, participant.id))
+    .returning();
+  return mapParticipant(row);
+}
+
+export async function resetParticipantFlags(
+  roomId: string,
+  flags: { isReady?: boolean; votingDone?: boolean },
+) {
+  const members = await listParticipants(roomId);
+  for (const member of members) {
+    await updateParticipant({
+      ...member,
+      isReady: flags.isReady ?? member.isReady,
+      votingDone: flags.votingDone ?? member.votingDone,
+    });
+  }
 }
 
 export async function listSongs(roomId?: string): Promise<Song[]> {

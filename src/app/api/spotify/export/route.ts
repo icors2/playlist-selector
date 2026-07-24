@@ -198,14 +198,23 @@ export async function GET(request: Request) {
       existingPlaylistId: roomState.room.spotifyPlaylistId,
     });
 
-    if (!playlist) {
+    if (!playlist || playlist.error) {
+      console.error("Spotify playlist write failed", playlist?.error);
       const response = roomRedirect(appBase, parsed.code, "playlist");
       clearRedirectCookie(response);
       return response;
     }
 
+    if (playlist.trackCount < 1) {
+      const response = roomRedirect(appBase, parsed.code, "empty_write");
+      clearRedirectCookie(response);
+      return response;
+    }
+
     await savePlaylistLink(parsed.code, parsed.hostToken, playlist);
-    const status = playlist.created ? "created" : "success";
+    const status = playlist.created
+      ? `created_${playlist.trackCount}`
+      : `success_${playlist.trackCount}`;
     const response = roomRedirect(appBase, parsed.code, status);
     clearRedirectCookie(response);
     return response;

@@ -31,6 +31,8 @@ function phaseLabel(phase: string) {
       return "Lobby";
     case "nominate":
       return "Nominate";
+    case "ready":
+      return "Ready check";
     case "vote":
       return "Vote";
     case "results":
@@ -60,9 +62,8 @@ export function RoomClient({ code }: { code: string }) {
   >(null);
   const [searching, setSearching] = useState(false);
   const [newSongIds, setNewSongIds] = useState<Set<string>>(new Set());
-  const [showAddDuringVote, setShowAddDuringVote] = useState(true);
   const [playlistUrl, setPlaylistUrl] = useState(
-    "https://open.spotify.com/playlist/7wAOTTNJOMAGLNPq537v5a",
+    "https://open.spotify.com/playlist/5GZfxd5LeJg0rH2tVcXRcB",
   );
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [spotifyReady, setSpotifyReady] = useState<boolean | null>(null);
@@ -117,13 +118,26 @@ export function RoomClient({ code }: { code: string }) {
       try {
         const params = new URLSearchParams(window.location.search);
         const spotifyStatus = params.get("spotify");
-        if (spotifyStatus === "success") {
+        if (spotifyStatus === "success" || spotifyStatus?.startsWith("success_")) {
+          const n = spotifyStatus.startsWith("success_")
+            ? spotifyStatus.slice("success_".length)
+            : "";
           setImportMessage(
-            "Spotify confirmed — your playlist was updated with the winning songs. Open it in Spotify to check.",
+            n
+              ? `Spotify playlist updated with ${n} song${n === "1" ? "" : "s"}. Open the linked playlist to verify.`
+              : "Spotify playlist updated with the winning songs. Open it to verify.",
           );
-        } else if (spotifyStatus === "created") {
+        } else if (
+          spotifyStatus === "created" ||
+          spotifyStatus?.startsWith("created_")
+        ) {
+          const n = spotifyStatus.startsWith("created_")
+            ? spotifyStatus.slice("created_".length)
+            : "";
           setImportMessage(
-            "Spotify confirmed — a new playlist was created with the winners (the linked one wasn’t writable). Open it in Spotify to check.",
+            n
+              ? `Created a new Spotify playlist with ${n} song${n === "1" ? "" : "s"} (no playlist was linked). Open it from the button above.`
+              : "Created a new Spotify playlist with the winners.",
           );
         } else if (spotifyStatus === "denied") {
           setError("Spotify authorization was denied.");
@@ -137,7 +151,11 @@ export function RoomClient({ code }: { code: string }) {
           );
         } else if (spotifyStatus === "playlist") {
           setError(
-            "Spotify accepted login but couldn’t write tracks. Make sure you’re logged into the Spotify account that owns the playlist.",
+            "Couldn’t write to your linked Spotify playlist. Agree while logged into the Spotify account that owns it, and make sure the playlist was linked before export.",
+          );
+        } else if (spotifyStatus === "empty_write") {
+          setError(
+            "Spotify login worked but the playlist still has 0 tracks. Check playlist ownership and try again.",
           );
         } else if (spotifyStatus === "room") {
           setError("Couldn’t verify host session after Spotify login. Try exporting again from this device.");
@@ -357,6 +375,47 @@ export function RoomClient({ code }: { code: string }) {
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Vote failed");
+    }
+  }
+
+  async function answerReady(ready: boolean) {
+    setBusy(true);
+    setError(null);
+    try {
+      const { res, data } = await fetchJson<{
+        error?: string;
+        advanced?: boolean;
+      }>(`/api/rooms/${roomCode}/ready`, {
+        method: "POST",
+        headers: authHeaders(roomCode),
+        body: JSON.stringify({ ready }),
+      });
+      if (!res.ok) throw new Error(data.error || "Could not save ready answer");
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save ready answer");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function markVotingDone() {
+    setBusy(true);
+    setError(null);
+    try {
+      const { res, data } = await fetchJson<{
+        error?: string;
+        advanced?: boolean;
+      }>(`/api/rooms/${roomCode}/done`, {
+        method: "POST",
+        headers: authHeaders(roomCode),
+      });
+      if (!res.ok) throw new Error(data.error || "Could not finish voting");
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not finish voting");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -606,28 +665,19 @@ export function RoomClient({ code }: { code: string }) {
               type="button"
               className="btn-primary"
               disabled={busy || state.songs.length === 0}
-              onClick={() => setPhase("vote")}
+              onClick={() => setPhase("ready")}
             >
-              Start voting
+              Ask if everyone’s ready
             </button>
           ) : null}
-          {state.isHost && state.room.phase === "vote" ? (
-            <button
-              type="button"
-              className="btn-primary"
-              disabled={busy}
-              onClick={() => setPhase("results")}
-            >
-              Reveal playlist
-            </button>
-          ) : null}
-          {state.room.phase === "vote" ? (
+          {state.isHost && state.room.phase === "ready" ? (
             <button
               type="button"
               className="btn-ghost"
-              onClick={() => setShowAddDuringVote((v) => !v)}
+              disabled={busy}
+              onClick={() => setPhase("nominate")}
             >
-              {showAddDuringVote ? "Hide add songs" : "Add more songs"}
+              Back to add songs
             </button>
           ) : null}
         </div>
@@ -663,6 +713,16 @@ export function RoomClient({ code }: { code: string }) {
             >
               {p.name}
               {p.id === state.viewer?.id ? " · you" : ""}
+              {state.room.phase === "ready"
+                ? p.isReady
+                  ? " · ready"
+                  : " · waiting"
+                : ""}
+              {state.room.phase === "vote"
+                ? p.votingDone
+                  ? " · done"
+                  : " · voting"
+                : ""}
             </span>
           ))}
         </div>
@@ -672,8 +732,9 @@ export function RoomClient({ code }: { code: string }) {
         <section className="panel mt-10 p-6 sm:p-8 animate-rise-delay-2">
           <h2 className="font-display text-2xl font-bold">Waiting room</h2>
           <p className="mt-2 max-w-xl text-paper-dim">
-            Share the code. Link a Spotify playlist you own (blank is fine) —
-            after voting, Okaylist can write the winners back to it. Songs need{" "}
+            Copy the invite so everyone opens the room on their own phone —
+            anyone who joins can add songs. Link a Spotify playlist you own;
+            after voting the host can write winners to it. Songs need{" "}
             <span className="text-paper">80% Love/Okay</span> approvals.
           </p>
           <p className="mt-6 font-display text-5xl tracking-[0.25em] text-amber">
@@ -954,10 +1015,67 @@ export function RoomClient({ code }: { code: string }) {
         </section>
       ) : null}
 
+      {state.room.phase === "ready" ? (
+        <section className="panel mt-10 p-6 sm:p-8 animate-rise-delay-2">
+          <h2 className="font-display text-2xl font-bold">
+            Ready to vote?
+          </h2>
+          <p className="mt-2 max-w-xl text-paper-dim">
+            Everyone in the room needs to answer. Choose <span className="text-paper">Yes</span>{" "}
+            only if you’re done adding songs. When everyone says yes, voting
+            starts automatically.
+          </p>
+          <p className="mt-4 text-sm text-paper-dim">
+            {state.participants.filter((p) => p.isReady).length}/
+            {state.participants.length} ready
+          </p>
+          <ul className="mt-4 grid gap-2">
+            {state.participants.map((p) => (
+              <li
+                key={p.id}
+                className="flex items-center justify-between gap-3 border-b border-[var(--line)] py-2 text-sm last:border-none"
+              >
+                <span>
+                  {p.name}
+                  {p.id === state.viewer?.id ? " (you)" : ""}
+                </span>
+                <span className={p.isReady ? "text-foam" : "text-paper-dim"}>
+                  {p.isReady ? "Yes" : "Not yet"}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {!state.viewer?.isReady ? (
+            <div className="mt-6 flex flex-wrap gap-3">
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={busy}
+                onClick={() => answerReady(true)}
+              >
+                Yes — start voting
+              </button>
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={busy}
+                onClick={() => answerReady(false)}
+              >
+                No — still adding
+              </button>
+            </div>
+          ) : (
+            <p className="mt-6 text-sm text-foam">
+              You’re marked ready. Waiting for everyone else…
+            </p>
+          )}
+        </section>
+      ) : null}
+
       {state.room.phase === "vote" ? (
-        <section className="mt-10 grid gap-8 lg:grid-cols-[1.1fr_0.9fr]">
+        <section className="mt-10 grid gap-8">
           <div>
-            <div className="mb-4 flex items-end justify-between gap-3">
+            <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
               <div>
                 <h2 className="font-display text-2xl font-bold">
                   Cast your votes
@@ -967,19 +1085,19 @@ export function RoomClient({ code }: { code: string }) {
                   <span className="text-paper">
                     {requiredApprovals} of {state.participants.length}
                   </span>{" "}
-                  approvals (80%). New songs appear here live — keep voting as
-                  they show up.
+                  approvals (80%). Vote on every song, then press Done.
                 </p>
               </div>
               <p className="text-sm text-paper-dim">
-                {votedCount}/{state.songs.length} voted
+                {votedCount}/{state.songs.length} voted ·{" "}
+                {state.participants.filter((p) => p.votingDone).length}/
+                {state.participants.length} done
               </p>
             </div>
             <ul className="grid gap-4">
               {voteSongs.length === 0 ? (
                 <li className="panel p-4 text-sm text-paper-dim">
-                  No songs yet — add one on the right and it will show up for
-                  everyone to vote.
+                  No songs in this round.
                 </li>
               ) : null}
               {voteSongs.map((song) => {
@@ -1058,136 +1176,26 @@ export function RoomClient({ code }: { code: string }) {
                 );
               })}
             </ul>
-          </div>
 
-          {showAddDuringVote ? (
-            <div className="panel h-fit p-5 sm:p-6 lg:sticky lg:top-6">
-              <h2 className="font-display text-2xl font-bold">Add songs</h2>
-              <p className="mt-1 text-sm text-paper-dim">
-                Spotify search with iTunes backup. New tracks land in the vote
-                list within a couple seconds.
-              </p>
-
-              <input
-                className="field mt-4"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search songs or artists…"
-              />
-              {catalogSource ? (
-                <p className="mt-2 text-xs text-paper-dim">
-                  {catalogSource === "spotify"
-                    ? "Results from Spotify"
-                    : catalogSource === "itunes"
-                      ? "Results from iTunes (Spotify unavailable)"
-                      : catalogSource === "database"
-                        ? "Results from local catalog"
-                        : "Built-in catalog"}
-                  {searching ? " · searching…" : ""}
-                </p>
-              ) : null}
-
-              <ul className="mt-4 grid max-h-[42vh] gap-2 overflow-y-auto pr-1">
-                {catalog.length === 0 && !searching ? (
-                  <li className="text-sm text-paper-dim">
-                    No matches. Try another search or add manually below.
-                  </li>
-                ) : null}
-                {catalog.map((track) => {
-                  const already = state.songs.some(
-                    (s) =>
-                      s.spotifyTrackId ===
-                        (track.externalId || `catalog:${track.id}`) ||
-                      (s.name.toLowerCase() === track.title.toLowerCase() &&
-                        s.artists.toLowerCase() ===
-                          track.artists.toLowerCase()),
-                  );
-                  return (
-                    <li
-                      key={track.id}
-                      className="flex items-center gap-3 rounded-2xl border border-[var(--line)] p-2.5"
-                    >
-                      {track.albumArt ? (
-                        <Image
-                          src={track.albumArt}
-                          alt=""
-                          width={44}
-                          height={44}
-                          className="h-11 w-11 shrink-0 rounded-lg object-cover"
-                          unoptimized
-                        />
-                      ) : (
-                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-ink-soft text-xs text-paper-dim">
-                          ♪
-                        </div>
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate font-semibold">{track.title}</p>
-                        <p className="truncate text-sm text-paper-dim">
-                          {track.artists}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        className="btn-ghost shrink-0 px-3 py-2 text-sm"
-                        disabled={already || busy}
-                        onClick={() => nominateFromCatalog(track)}
-                      >
-                        {already ? "Added" : "Add"}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-
-              <div className="mt-5 border-t border-[var(--line)] pt-4">
+            <div className="mt-8 flex flex-wrap items-center gap-3">
+              {!state.viewer?.votingDone ? (
                 <button
                   type="button"
-                  className="text-sm text-amber underline"
-                  onClick={() => setShowManual((v) => !v)}
+                  className="btn-primary"
+                  disabled={busy || votedCount < state.songs.length}
+                  onClick={markVotingDone}
                 >
-                  {showManual
-                    ? "Hide manual entry"
-                    : "Song not listed? Add it manually"}
+                  {votedCount < state.songs.length
+                    ? `Done (${votedCount}/${state.songs.length})`
+                    : "Done voting"}
                 </button>
-                {showManual ? (
-                  <form className="mt-3 grid gap-3" onSubmit={nominateManual}>
-                    <label className="grid gap-1.5 text-sm text-paper-dim">
-                      Song title
-                      <input
-                        className="field"
-                        value={songTitle}
-                        onChange={(e) => setSongTitle(e.target.value)}
-                        placeholder="Mr. Brightside"
-                        required
-                        maxLength={200}
-                      />
-                    </label>
-                    <label className="grid gap-1.5 text-sm text-paper-dim">
-                      Artist
-                      <input
-                        className="field"
-                        value={songArtist}
-                        onChange={(e) => setSongArtist(e.target.value)}
-                        placeholder="The Killers"
-                        required
-                        maxLength={200}
-                      />
-                    </label>
-                    <button
-                      type="submit"
-                      className="btn-primary justify-self-start"
-                      disabled={
-                        busy || !songTitle.trim() || !songArtist.trim()
-                      }
-                    >
-                      {busy ? "Adding…" : "Add custom song"}
-                    </button>
-                  </form>
-                ) : null}
-              </div>
+              ) : (
+                <p className="text-sm text-foam">
+                  You’re done. Waiting for everyone else to finish…
+                </p>
+              )}
             </div>
-          ) : null}
+          </div>
         </section>
       ) : null}
 
@@ -1240,12 +1248,12 @@ export function RoomClient({ code }: { code: string }) {
                     {busy
                       ? "Opening Spotify…"
                       : state.room.spotifyPlaylistId
-                        ? "Update Spotify playlist"
+                        ? "Submit to Spotify playlist"
                         : "Export to Spotify"}
                   </button>
                 ) : !state.room.spotifyPlaylistUrl ? (
                   <p className="text-sm text-paper-dim">
-                    Waiting for host to export…
+                    Waiting for host to submit to Spotify…
                   </p>
                 ) : null}
               </div>

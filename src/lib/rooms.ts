@@ -10,7 +10,9 @@ import {
   listRooms,
   listSongs,
   listVotes,
+  resetParticipantFlags,
   storeConfigured,
+  updateParticipant,
   updateRoom,
   upsertVote,
 } from "./store";
@@ -53,6 +55,8 @@ export async function createRoom(
     roomId: room.id,
     name: hostName.trim() || "Host",
     token: participantToken,
+    isReady: false,
+    votingDone: false,
     createdAt,
   });
 
@@ -84,6 +88,8 @@ export async function joinRoom(code: string, name: string) {
     roomId: room.id,
     name: name.trim(),
     token,
+    isReady: false,
+    votingDone: false,
     createdAt: now(),
   });
 
@@ -152,12 +158,19 @@ export async function loadRoom(
     participants: memberList.map((m) => ({
       id: m.id,
       name: m.name,
+      isReady: m.isReady,
+      votingDone: m.votingDone,
       createdAt: m.createdAt,
     })),
     songs: songsWithVotes,
     viewer:
       viewer && viewer.roomId === room.id
-        ? { id: viewer.id, name: viewer.name }
+        ? {
+            id: viewer.id,
+            name: viewer.name,
+            isReady: viewer.isReady,
+            votingDone: viewer.votingDone,
+          }
         : null,
     isHost,
   };
@@ -176,17 +189,110 @@ export async function setPhase(
 
   const allowed: Record<RoomPhase, RoomPhase[]> = {
     lobby: ["nominate"],
-    nominate: ["vote", "lobby"],
+    nominate: ["ready", "lobby"],
+    ready: ["vote", "nominate"],
     vote: ["results", "nominate"],
-    results: ["vote"],
+    results: ["nominate"],
   };
 
   if (!allowed[room.phase].includes(phase)) {
     return { error: `Cannot move from ${room.phase} to ${phase}` as const };
   }
 
+  if (phase === "ready") {
+    const songs = await listSongs(room.id);
+    if (songs.length === 0) {
+      return { error: "Add at least one song before voting" as const };
+    }
+    await resetParticipantFlags(room.id, { isReady: false, votingDone: false });
+  }
+
+  if (phase === "vote") {
+    await resetParticipantFlags(room.id, { votingDone: false });
+  }
+
+  if (phase === "nominate") {
+    await resetParticipantFlags(room.id, { isReady: false, votingDone: false });
+  }
+
   const updated = await updateRoom({ ...room, phase });
   return { room: updated };
+}
+
+/** Participant answers the ready-to-vote prompt. */
+export async function setParticipantReady(options: {
+  code: string;
+  participantToken: string;
+  ready: boolean;
+}) {
+  const room = await getRoomByCode(options.code);
+  if (!room) return { error: "Room not found" as const };
+  if (room.phase !== "ready") {
+    return { error: "Ready check isn’t open" as const };
+  }
+
+  const participant = await getParticipantByToken(options.participantToken);
+  if (!participant || participant.roomId !== room.id) {
+    return { error: "Join the room first" as const };
+  }
+
+  await updateParticipant({ ...participant, isReady: options.ready });
+
+  if (options.ready) {
+    const refreshed = await listParticipants(room.id);
+    if (refreshed.length > 0 && refreshed.every((m) => m.isReady)) {
+      await resetParticipantFlags(room.id, { votingDone: false });
+      const updated = await updateRoom({ ...room, phase: "vote" });
+      return { room: updated, advanced: true as const };
+    }
+  }
+
+  return { ok: true as const, advanced: false as const };
+}
+
+/** Participant finished casting votes. */
+export async function setParticipantVotingDone(options: {
+  code: string;
+  participantToken: string;
+}) {
+  const room = await getRoomByCode(options.code);
+  if (!room) return { error: "Room not found" as const };
+  if (room.phase !== "vote") {
+    return { error: "Voting isn’t open" as const };
+  }
+
+  const participant = await getParticipantByToken(options.participantToken);
+  if (!participant || participant.roomId !== room.id) {
+    return { error: "Join the room first" as const };
+  }
+
+  const songs = await listSongs(room.id);
+  if (songs.length === 0) {
+    return { error: "No songs to vote on" as const };
+  }
+
+  const allVotes = await listVotes(songs.map((s) => s.id));
+  const votedSongIds = new Set(
+    allVotes
+      .filter((v) => v.participantId === participant.id)
+      .map((v) => v.songId),
+  );
+  const missing = songs.filter((s) => !votedSongIds.has(s.id));
+  if (missing.length > 0) {
+    return {
+      error: `Vote on every song first (${missing.length} left)`,
+    } as const;
+  }
+
+  await updateParticipant({ ...participant, votingDone: true });
+
+  const refreshed = await listParticipants(room.id);
+  if (refreshed.every((m) => m.votingDone)) {
+    const updated = await updateRoom({ ...room, phase: "results" });
+    return { room: updated, advanced: true as const };
+  }
+
+  return { ok: true as const, advanced: false as const };
 }
 
 function manualTrackId(name: string, artists: string) {
@@ -209,8 +315,8 @@ export async function nominateSong(options: {
 }) {
   const room = await getRoomByCode(options.code);
   if (!room) return { error: "Room not found" as const };
-  // Keep nominations open during voting so the group can keep adding songs.
-  if (room.phase !== "nominate" && room.phase !== "vote") {
+  // Nominations only before the ready check / voting starts.
+  if (room.phase !== "nominate") {
     return { error: "Nominations are closed" as const };
   }
 

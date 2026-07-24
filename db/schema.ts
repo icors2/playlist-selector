@@ -1,4 +1,5 @@
 import {
+  boolean,
   integer,
   pgEnum,
   pgTable,
@@ -11,6 +12,7 @@ import {
 export const roomPhaseEnum = pgEnum("room_phase", [
   "lobby",
   "nominate",
+  "ready",
   "vote",
   "results",
 ]);
@@ -43,6 +45,8 @@ export const participants = pgTable(
       .references(() => rooms.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     token: text("token").notNull().unique(),
+    isReady: boolean("is_ready").notNull().default(false),
+    votingDone: boolean("voting_done").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

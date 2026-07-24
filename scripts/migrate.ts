@@ -54,6 +54,8 @@ async function main() {
         // Tolerate re-runs against a DB that already has older tables/types.
         if (
           /already exists/i.test(message) ||
+          /duplicate_object/i.test(message) ||
+          /already present/i.test(message) ||
           message.includes("42710") ||
           message.includes("42P07")
         ) {

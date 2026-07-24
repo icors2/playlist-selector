@@ -15,6 +15,8 @@ export type RoomStateResponse = {
   participants: {
     id: string;
     name: string;
+    isReady: boolean;
+    votingDone: boolean;
     createdAt: string;
   }[];
   songs: {
@@ -35,7 +37,12 @@ export type RoomStateResponse = {
       value: VoteValue;
     }[];
   }[];
-  viewer: { id: string; name: string } | null;
+  viewer: {
+    id: string;
+    name: string;
+    isReady: boolean;
+    votingDone: boolean;
+  } | null;
   isHost: boolean;
   consensus: {
     playlist: ConsensusSong[];

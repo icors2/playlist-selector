@@ -1,4 +1,4 @@
-export type RoomPhase = "lobby" | "nominate" | "vote" | "results";
+export type RoomPhase = "lobby" | "nominate" | "ready" | "vote" | "results";
 export type VoteValue = "love" | "okay" | "pass";
 
 export type Room = {
@@ -17,6 +17,8 @@ export type Participant = {
   roomId: string;
   name: string;
   token: string;
+  isReady: boolean;
+  votingDone: boolean;
   createdAt: string;
 };
 

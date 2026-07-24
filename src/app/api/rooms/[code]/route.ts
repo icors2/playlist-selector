@@ -25,7 +25,7 @@ export async function GET(request: Request, { params }: Params) {
 }
 
 const phaseSchema = z.object({
-  phase: z.enum(["lobby", "nominate", "vote", "results"]),
+  phase: z.enum(["lobby", "nominate", "ready", "vote", "results"]),
 });
 
 export async function PATCH(request: Request, { params }: Params) {
