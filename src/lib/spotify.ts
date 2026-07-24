@@ -233,8 +233,8 @@ export function getSpotifyAuthUrl(state: string, redirectUri: string) {
     scope:
       "playlist-modify-public playlist-modify-private playlist-read-private playlist-read-collaborative user-read-email",
     state,
-    // Do not force the consent screen every time — that feels like a loop
-    // when export fails and the host retries "Update Spotify playlist".
+    // Always show Spotify's Agree screen so the host can confirm access.
+    show_dialog: "true",
   });
   return `${SPOTIFY_ACCOUNTS}/authorize?${params}`;
 }

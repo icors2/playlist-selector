@@ -118,10 +118,12 @@ export function RoomClient({ code }: { code: string }) {
         const params = new URLSearchParams(window.location.search);
         const spotifyStatus = params.get("spotify");
         if (spotifyStatus === "success") {
-          setImportMessage("Spotify playlist updated with the winning songs.");
+          setImportMessage(
+            "Spotify confirmed — your playlist was updated with the winning songs. Open it in Spotify to check.",
+          );
         } else if (spotifyStatus === "created") {
           setImportMessage(
-            "Couldn’t write to the linked playlist, so a new Spotify playlist was created with the winners.",
+            "Spotify confirmed — a new playlist was created with the winners (the linked one wasn’t writable). Open it in Spotify to check.",
           );
         } else if (spotifyStatus === "denied") {
           setError("Spotify authorization was denied.");
@@ -384,6 +386,7 @@ export function RoomClient({ code }: { code: string }) {
   async function exportPlaylist() {
     setBusy(true);
     setError(null);
+    setImportMessage("Opening Spotify so you can Agree / confirm access…");
     try {
       const { res, data } = await fetchJson<{ url?: string; error?: string }>(
         "/api/spotify/export",
@@ -396,8 +399,10 @@ export function RoomClient({ code }: { code: string }) {
       if (!res.ok || !data.url) {
         throw new Error(data.error || "Export failed");
       }
-      window.location.href = data.url;
+      // Full navigation to Spotify's Agree screen.
+      window.location.assign(data.url);
     } catch (err) {
+      setImportMessage(null);
       setError(err instanceof Error ? err.message : "Export failed");
       setBusy(false);
     }
@@ -1178,9 +1183,11 @@ export function RoomClient({ code }: { code: string }) {
                     }
                     onClick={exportPlaylist}
                   >
-                    {state.room.spotifyPlaylistId
-                      ? "Update Spotify playlist"
-                      : "Export to Spotify"}
+                    {busy
+                      ? "Opening Spotify…"
+                      : state.room.spotifyPlaylistId
+                        ? "Update Spotify playlist"
+                        : "Export to Spotify"}
                   </button>
                 ) : !state.room.spotifyPlaylistUrl ? (
                   <p className="text-sm text-paper-dim">
@@ -1216,7 +1223,22 @@ export function RoomClient({ code }: { code: string }) {
             ) : null}
 
             {importMessage ? (
-              <p className="mt-4 text-sm text-foam">{importMessage}</p>
+              <p className="mt-4 rounded-xl border border-foam/40 bg-foam/10 px-3 py-2 text-sm text-foam">
+                {importMessage}
+                {state.room.spotifyPlaylistUrl ? (
+                  <>
+                    {" "}
+                    <a
+                      className="underline"
+                      href={state.room.spotifyPlaylistUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Open playlist
+                    </a>
+                  </>
+                ) : null}
+              </p>
             ) : null}
 
             {spotifyReady === false ? (
