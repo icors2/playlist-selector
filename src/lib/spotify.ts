@@ -23,6 +23,41 @@ export function spotifyConfigured() {
   );
 }
 
+/** Public site origin for redirects (Render / reverse proxies). */
+export function publicAppBase(request: Request): string {
+  const fromEnv = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/$/, "");
+  if (fromEnv) return fromEnv;
+
+  const forwardedHost = request.headers
+    .get("x-forwarded-host")
+    ?.split(",")[0]
+    ?.trim();
+  const host =
+    forwardedHost ||
+    request.headers.get("host") ||
+    new URL(request.url).host;
+
+  let proto = request.headers
+    .get("x-forwarded-proto")
+    ?.split(",")[0]
+    ?.trim();
+  if (!proto) {
+    proto =
+      host.includes("localhost") || host.startsWith("127.") ? "http" : "https";
+  }
+  // TLS terminates at the edge on Render.
+  if (host.endsWith(".onrender.com")) proto = "https";
+
+  return `${proto}://${host}`;
+}
+
+/** Must match Spotify Dashboard redirect URI exactly. */
+export function spotifyRedirectUri(request: Request): string {
+  return `${publicAppBase(request)}/api/spotify/export`;
+}
+
+export const SPOTIFY_REDIRECT_COOKIE = "spotify_oauth_redirect";
+
 async function getAppAccessToken(): Promise<string | null> {
   if (!spotifyConfigured()) return null;
 
@@ -198,7 +233,8 @@ export function getSpotifyAuthUrl(state: string, redirectUri: string) {
     scope:
       "playlist-modify-public playlist-modify-private playlist-read-private playlist-read-collaborative user-read-email",
     state,
-    show_dialog: "true",
+    // Do not force the consent screen every time — that feels like a loop
+    // when export fails and the host retries "Update Spotify playlist".
   });
   return `${SPOTIFY_ACCOUNTS}/authorize?${params}`;
 }
@@ -228,7 +264,11 @@ export async function exchangeCodeForTokens(
   });
 
   if (!res.ok) {
-    console.error("Spotify code exchange error", await res.text());
+    console.error(
+      "Spotify code exchange error",
+      { redirectUri, status: res.status },
+      await res.text(),
+    );
     return null;
   }
 
@@ -408,18 +448,26 @@ export async function createSpotifyPlaylist(options: {
   trackIds: string[];
   /** When set, rewrite this existing playlist instead of creating a new one. */
   existingPlaylistId?: string | null;
-}): Promise<{ id: string; url: string } | null> {
+}): Promise<{ id: string; url: string; created: boolean } | null> {
   if (options.existingPlaylistId) {
     const ok = await replacePlaylistTracks(
       options.accessToken,
       options.existingPlaylistId,
       options.trackIds,
     );
-    if (!ok) return null;
-    return {
-      id: options.existingPlaylistId,
-      url: `https://open.spotify.com/playlist/${options.existingPlaylistId}`,
-    };
+    if (ok) {
+      return {
+        id: options.existingPlaylistId,
+        url: `https://open.spotify.com/playlist/${options.existingPlaylistId}`,
+        created: false,
+      };
+    }
+    // Linked playlist may be owned by another account or unwritable —
+    // fall through and create a new playlist for this Spotify user.
+    console.warn(
+      "Spotify update of linked playlist failed; creating a new playlist",
+      options.existingPlaylistId,
+    );
   }
 
   const meRes = await fetch(`${SPOTIFY_API}/me`, {
@@ -464,7 +512,11 @@ export async function createSpotifyPlaylist(options: {
   );
   if (!ok && options.trackIds.length > 0) return null;
 
-  return { id: playlist.id, url: playlist.external_urls.spotify };
+  return {
+    id: playlist.id,
+    url: playlist.external_urls.spotify,
+    created: true,
+  };
 }
 
 export function getDemoTrackById(id: string) {

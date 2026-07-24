@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { buildConsensus } from "@/lib/consensus";
@@ -7,19 +8,35 @@ import {
   exchangeCodeForTokens,
   getSpotifyAuthUrl,
   isSpotifyTrackId,
+  publicAppBase,
   spotifyConfigured,
+  spotifyRedirectUri,
+  SPOTIFY_REDIRECT_COOKIE,
 } from "@/lib/spotify";
-
-function redirectUri(request: Request) {
-  const url = new URL(request.url);
-  const base =
-    process.env.NEXT_PUBLIC_APP_URL ?? `${url.protocol}//${url.host}`;
-  return `${base.replace(/\/$/, "")}/api/spotify/export`;
-}
 
 const startSchema = z.object({
   code: z.string().min(4).max(8),
 });
+
+function clearRedirectCookie(response: NextResponse) {
+  response.cookies.set(SPOTIFY_REDIRECT_COOKIE, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: true,
+    path: "/",
+    maxAge: 0,
+  });
+}
+
+function roomRedirect(
+  appBase: string,
+  roomCode: string,
+  status: string,
+) {
+  return NextResponse.redirect(
+    `${appBase}/room/${roomCode}?spotify=${status}`,
+  );
+}
 
 export async function POST(request: Request) {
   if (!spotifyConfigured()) {
@@ -53,12 +70,42 @@ export async function POST(request: Request) {
       );
     }
 
+    const consensus = buildConsensus(
+      state.songs,
+      state.participants.length,
+    );
+    const exportable = consensus.playlist.filter((s) =>
+      isSpotifyTrackId(s.spotifyTrackId),
+    );
+    if (exportable.length === 0) {
+      return NextResponse.json(
+        {
+          error:
+            "No Spotify track IDs to export. Nominate winners via Spotify search (not iTunes/manual), then try again.",
+        },
+        { status: 400 },
+      );
+    }
+
     const statePayload = Buffer.from(
       JSON.stringify({ code: body.code.toUpperCase(), hostToken }),
     ).toString("base64url");
 
-    const url = getSpotifyAuthUrl(statePayload, redirectUri(request));
-    return NextResponse.json({ url });
+    // Persist the exact redirect_uri used in authorize so the callback
+    // token exchange matches (Spotify requires byte-for-byte equality).
+    const redirect = spotifyRedirectUri(request);
+    console.info("Spotify OAuth start", { redirectUri: redirect });
+
+    const url = getSpotifyAuthUrl(statePayload, redirect);
+    const response = NextResponse.json({ url });
+    response.cookies.set(SPOTIFY_REDIRECT_COOKIE, redirect, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: redirect.startsWith("https"),
+      path: "/",
+      maxAge: 600,
+    });
+    return response;
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: "Invalid request" }, { status: 400 });
@@ -73,13 +120,16 @@ export async function GET(request: Request) {
   const code = searchParams.get("code");
   const state = searchParams.get("state");
   const error = searchParams.get("error");
+  const appBase = publicAppBase(request);
 
-  const appBase =
-    process.env.NEXT_PUBLIC_APP_URL ??
-    `${new URL(request.url).protocol}//${new URL(request.url).host}`;
+  const cookieStore = await cookies();
+  const redirectFromCookie = cookieStore.get(SPOTIFY_REDIRECT_COOKIE)?.value;
+  const redirect = redirectFromCookie || spotifyRedirectUri(request);
 
   if (error || !code || !state) {
-    return NextResponse.redirect(`${appBase}/?spotify=denied`);
+    const response = NextResponse.redirect(`${appBase}/?spotify=denied`);
+    clearRedirectCookie(response);
+    return response;
   }
 
   try {
@@ -87,20 +137,22 @@ export async function GET(request: Request) {
       Buffer.from(state, "base64url").toString("utf8"),
     ) as { code: string; hostToken: string };
 
-    const tokens = await exchangeCodeForTokens(code, redirectUri(request));
+    console.info("Spotify OAuth callback", { redirectUri: redirect });
+
+    const tokens = await exchangeCodeForTokens(code, redirect);
     if (!tokens) {
-      return NextResponse.redirect(
-        `${appBase}/room/${parsed.code}?spotify=error`,
-      );
+      const response = roomRedirect(appBase, parsed.code, "token");
+      clearRedirectCookie(response);
+      return response;
     }
 
     const roomState = await loadRoom(parsed.code, {
       hostToken: parsed.hostToken,
     });
     if (!roomState || !roomState.isHost) {
-      return NextResponse.redirect(
-        `${appBase}/room/${parsed.code}?spotify=error`,
-      );
+      const response = roomRedirect(appBase, parsed.code, "room");
+      clearRedirectCookie(response);
+      return response;
     }
 
     const consensus = buildConsensus(
@@ -113,9 +165,9 @@ export async function GET(request: Request) {
       .filter(isSpotifyTrackId);
 
     if (trackIds.length === 0) {
-      return NextResponse.redirect(
-        `${appBase}/room/${parsed.code}?spotify=no_spotify_tracks`,
-      );
+      const response = roomRedirect(appBase, parsed.code, "no_spotify_tracks");
+      clearRedirectCookie(response);
+      return response;
     }
 
     const playlist = await createSpotifyPlaylist({
@@ -128,17 +180,20 @@ export async function GET(request: Request) {
     });
 
     if (!playlist) {
-      return NextResponse.redirect(
-        `${appBase}/room/${parsed.code}?spotify=error`,
-      );
+      const response = roomRedirect(appBase, parsed.code, "playlist");
+      clearRedirectCookie(response);
+      return response;
     }
 
     await savePlaylistLink(parsed.code, parsed.hostToken, playlist);
-    return NextResponse.redirect(
-      `${appBase}/room/${parsed.code}?spotify=success`,
-    );
+    const status = playlist.created ? "created" : "success";
+    const response = roomRedirect(appBase, parsed.code, status);
+    clearRedirectCookie(response);
+    return response;
   } catch (err) {
     console.error(err);
-    return NextResponse.redirect(`${appBase}/?spotify=error`);
+    const response = NextResponse.redirect(`${appBase}/?spotify=error`);
+    clearRedirectCookie(response);
+    return response;
   }
 }

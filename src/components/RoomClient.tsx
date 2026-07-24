@@ -119,12 +119,26 @@ export function RoomClient({ code }: { code: string }) {
         const spotifyStatus = params.get("spotify");
         if (spotifyStatus === "success") {
           setImportMessage("Spotify playlist updated with the winning songs.");
+        } else if (spotifyStatus === "created") {
+          setImportMessage(
+            "Couldn’t write to the linked playlist, so a new Spotify playlist was created with the winners.",
+          );
         } else if (spotifyStatus === "denied") {
           setError("Spotify authorization was denied.");
         } else if (spotifyStatus === "no_spotify_tracks") {
           setError(
             "No Spotify track IDs to export — nominate via Spotify search (not iTunes/manual) so winners can be written back.",
           );
+        } else if (spotifyStatus === "token") {
+          setError(
+            "Spotify login failed (token exchange). Confirm NEXT_PUBLIC_APP_URL and the Spotify Dashboard redirect URI are exactly https://okaylist.onrender.com/api/spotify/export",
+          );
+        } else if (spotifyStatus === "playlist") {
+          setError(
+            "Spotify accepted login but couldn’t write tracks. Make sure you’re logged into the Spotify account that owns the playlist.",
+          );
+        } else if (spotifyStatus === "room") {
+          setError("Couldn’t verify host session after Spotify login. Try exporting again from this device.");
         } else if (spotifyStatus === "error") {
           setError("Could not update Spotify playlist. Try again.");
         }
