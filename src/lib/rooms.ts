@@ -2,11 +2,6 @@ import type { SongWithVotes } from "./consensus";
 import { createRoomCode, createToken } from "./ids";
 import type { Room, RoomPhase, VoteValue } from "./models";
 import {
-  isSpotifyTrackId,
-  resolveSpotifyTrackId,
-  spotifyConfigured,
-} from "./spotify";
-import {
   deleteSong,
   insertParticipant,
   insertRoom,
@@ -230,18 +225,8 @@ export async function nominateSong(options: {
     return { error: "Song title and artist are required" as const };
   }
 
-  let trackId = options.track.id?.trim() || manualTrackId(name, artists);
-
-  // If the nomination came from iTunes/manual/catalog, try to attach a
-  // real Spotify track id so export can write the playlist later.
-  if (!isSpotifyTrackId(trackId) && spotifyConfigured()) {
-    try {
-      const resolved = await resolveSpotifyTrackId(name, artists);
-      if (resolved) trackId = resolved;
-    } catch (err) {
-      console.error("Spotify id resolve on nominate failed", err);
-    }
-  }
+  const trackId =
+    options.track.id?.trim() || manualTrackId(name, artists);
 
   const existing = await listSongs(room.id);
   if (

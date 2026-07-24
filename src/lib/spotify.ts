@@ -57,26 +57,22 @@ export async function spotifyAppAuthStatus(): Promise<{
       };
     }
 
-    const params = new URLSearchParams({
-      q: "mr brightside",
-      type: "track",
-      limit: "1",
-    });
-    const res = await fetch(`${SPOTIFY_API}/search?${params}`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(8000),
-      cache: "no-store",
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
+    // Use the same search helper as the app (not a separate fetch).
+    const tracks = await searchSpotifyCatalog("mr brightside", 1);
+    if (tracks.length === 0) {
       return {
         configured: true,
         tokenOk: true,
         searchOk: false,
-        error: `Spotify search failed (${res.status}): ${body.slice(0, 160)}`,
+        error: "Spotify search returned no tracks",
       };
     }
-    return { configured: true, tokenOk: true, searchOk: true };
+    return {
+      configured: true,
+      tokenOk: true,
+      searchOk: true,
+      error: undefined,
+    };
   } catch (err) {
     return {
       configured: true,
@@ -223,25 +219,37 @@ export async function searchSpotifyCatalog(
     throw new Error("Spotify credentials are not configured");
   }
 
+  const market =
+    process.env.SPOTIFY_MARKET?.trim() ||
+    process.env.SPOTIFY_DEFAULT_MARKET?.trim() ||
+    "US";
+
   const params = new URLSearchParams({
     q: term,
     type: "track",
     limit: String(Math.min(50, Math.max(1, limit))),
+    market,
   });
 
   const res = await fetch(`${SPOTIFY_API}/search?${params}`, {
     headers: { Authorization: `Bearer ${token}` },
-    signal: AbortSignal.timeout(8000),
+    signal: AbortSignal.timeout(12_000),
     cache: "no-store",
   });
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`Spotify search failed (${res.status}) ${body.slice(0, 120)}`);
+    // Invalid/expired token — clear cache so the next call re-auths.
+    if (res.status === 401 || res.status === 403) {
+      globalSpotify.spotifyAppToken = undefined;
+    }
+    throw new Error(
+      `Spotify search failed (${res.status}) ${body.slice(0, 200)}`,
+    );
   }
 
   const data = (await res.json()) as {
-    tracks?: { items?: SpotifySearchItem[] };
+    tracks?: { items?: (SpotifySearchItem | null)[] };
   };
 
   const seen = new Set<string>();

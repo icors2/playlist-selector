@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { nominateSong, removeSong } from "@/lib/rooms";
+import {
+  isSpotifyTrackId,
+  resolveSpotifyTrackId,
+  spotifyConfigured,
+} from "@/lib/spotify";
 
 type Params = { params: Promise<{ code: string }> };
 
@@ -23,11 +28,19 @@ export async function POST(request: Request, { params }: Params) {
 
   try {
     const track = nominateSchema.parse(await request.json());
+    let trackId = track.id?.trim();
+
+    // Prefer a real Spotify id so later playlist export can write tracks.
+    if ((!trackId || !isSpotifyTrackId(trackId)) && spotifyConfigured()) {
+      const resolved = await resolveSpotifyTrackId(track.name, track.artists);
+      if (resolved) trackId = resolved;
+    }
+
     const result = await nominateSong({
       code,
       participantToken,
       track: {
-        id: track.id,
+        id: trackId,
         name: track.name,
         artists: track.artists,
         albumArt: track.albumArt ?? null,
