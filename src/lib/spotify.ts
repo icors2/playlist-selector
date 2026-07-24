@@ -34,24 +34,31 @@ export async function spotifyAppAuthStatus(): Promise<{
   configured: boolean;
   tokenOk: boolean;
   searchOk: boolean;
+  probeVersion: string;
+  sampleTrackId?: string;
   error?: string;
 }> {
+  const probeVersion = "2026-07-24c";
   if (!spotifyConfigured()) {
     return {
       configured: false,
       tokenOk: false,
       searchOk: false,
+      probeVersion,
       error: "SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET missing",
     };
   }
 
+  let tokenOk = false;
   try {
     const token = await getAppAccessToken();
+    tokenOk = Boolean(token);
     if (!token) {
       return {
         configured: true,
         tokenOk: false,
         searchOk: false,
+        probeVersion,
         error:
           "Spotify rejected Client Credentials. Check Client ID/Secret (no extra spaces) in Render env vars.",
       };
@@ -64,20 +71,24 @@ export async function spotifyAppAuthStatus(): Promise<{
         configured: true,
         tokenOk: true,
         searchOk: false,
-        error: "Spotify search returned no tracks",
+        probeVersion,
+        error:
+          "Spotify search returned no tracks (check SPOTIFY_MARKET / app access)",
       };
     }
     return {
       configured: true,
       tokenOk: true,
       searchOk: true,
-      error: undefined,
+      probeVersion,
+      sampleTrackId: tracks[0]?.externalId ?? undefined,
     };
   } catch (err) {
     return {
       configured: true,
-      tokenOk: false,
+      tokenOk,
       searchOk: false,
+      probeVersion,
       error: err instanceof Error ? err.message : "Spotify auth probe failed",
     };
   }
