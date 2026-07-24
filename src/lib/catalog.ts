@@ -122,7 +122,7 @@ export async function searchCatalog(
       try {
         // Cap Spotify page size — large limits have been flaky with
         // Client Credentials on some apps.
-        const spotify = await searchSpotifyCatalog(q, Math.min(limit, 20));
+        const spotify = await searchSpotifyCatalog(q, Math.min(limit, 10));
         if (spotify.length > 0) {
           return { tracks: spotify, source: "spotify" };
         }

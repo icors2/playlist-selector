@@ -235,10 +235,15 @@ export async function searchSpotifyCatalog(
     process.env.SPOTIFY_DEFAULT_MARKET?.trim() ||
     "US";
 
+  // Spotify Web API rejects some Client Credentials searches with
+  // "Invalid limit" when limit is too high for the app/token type.
+  // Keep this conservative; status/debug probes with 1–3 already work.
+  const pageSize = Math.min(10, Math.max(1, Number(limit) || 10));
+
   const params = new URLSearchParams({
     q: term,
     type: "track",
-    limit: String(Math.min(50, Math.max(1, limit))),
+    limit: String(pageSize),
     market,
   });
 
@@ -305,7 +310,7 @@ export async function searchTracks(query: string): Promise<{
   error?: string;
 }> {
   try {
-    const catalog = await searchSpotifyCatalog(query || "party hits", 12);
+    const catalog = await searchSpotifyCatalog(query || "party hits", 10);
     return {
       tracks: catalog.map((t) => ({
         id: t.externalId ?? t.id,
