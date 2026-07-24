@@ -7,8 +7,8 @@ import {
   createSpotifyPlaylist,
   exchangeCodeForTokens,
   getSpotifyAuthUrl,
-  isSpotifyTrackId,
   publicAppBase,
+  resolveExportTrackIds,
   spotifyConfigured,
   spotifyRedirectUri,
   SPOTIFY_REDIRECT_COOKIE,
@@ -75,14 +75,21 @@ export async function POST(request: Request) {
       state.songs,
       state.participants.length,
     );
-    const exportable = consensus.playlist.filter((s) =>
-      isSpotifyTrackId(s.spotifyTrackId),
-    );
-    if (exportable.length === 0) {
+    if (consensus.playlist.length === 0) {
+      return NextResponse.json(
+        { error: "No winning songs to export yet." },
+        { status: 400 },
+      );
+    }
+
+    // Resolve iTunes/manual winners to Spotify ids up front so we fail
+    // before sending the host through OAuth when search is broken.
+    const { trackIds } = await resolveExportTrackIds(consensus.playlist);
+    if (trackIds.length === 0) {
       return NextResponse.json(
         {
           error:
-            "No Spotify track IDs to export. Nominate winners via Spotify search (not iTunes/manual), then try again.",
+            "Couldn’t match winners to Spotify tracks. Spotify search may be down — check /api/spotify/status (tokenOk/searchOk), then try again.",
         },
         { status: 400 },
       );
@@ -174,9 +181,7 @@ export async function GET(request: Request) {
       roomState.participants.length,
     );
 
-    const trackIds = consensus.playlist
-      .map((s) => s.spotifyTrackId)
-      .filter(isSpotifyTrackId);
+    const { trackIds } = await resolveExportTrackIds(consensus.playlist);
 
     if (trackIds.length === 0) {
       const response = roomRedirect(appBase, parsed.code, "no_spotify_tracks");

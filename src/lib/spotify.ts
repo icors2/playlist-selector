@@ -17,10 +17,74 @@ const globalSpotify = globalThis as unknown as {
   spotifyAppToken?: TokenCache;
 };
 
+function spotifyClientId() {
+  return process.env.SPOTIFY_CLIENT_ID?.trim() || "";
+}
+
+function spotifyClientSecret() {
+  return process.env.SPOTIFY_CLIENT_SECRET?.trim() || "";
+}
+
 export function spotifyConfigured() {
-  return Boolean(
-    process.env.SPOTIFY_CLIENT_ID && process.env.SPOTIFY_CLIENT_SECRET,
-  );
+  return Boolean(spotifyClientId() && spotifyClientSecret());
+}
+
+/** Probe Client Credentials — used by /api/spotify/status. */
+export async function spotifyAppAuthStatus(): Promise<{
+  configured: boolean;
+  tokenOk: boolean;
+  searchOk: boolean;
+  error?: string;
+}> {
+  if (!spotifyConfigured()) {
+    return {
+      configured: false,
+      tokenOk: false,
+      searchOk: false,
+      error: "SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET missing",
+    };
+  }
+
+  try {
+    const token = await getAppAccessToken();
+    if (!token) {
+      return {
+        configured: true,
+        tokenOk: false,
+        searchOk: false,
+        error:
+          "Spotify rejected Client Credentials. Check Client ID/Secret (no extra spaces) in Render env vars.",
+      };
+    }
+
+    const params = new URLSearchParams({
+      q: "mr brightside",
+      type: "track",
+      limit: "1",
+    });
+    const res = await fetch(`${SPOTIFY_API}/search?${params}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(8000),
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      return {
+        configured: true,
+        tokenOk: true,
+        searchOk: false,
+        error: `Spotify search failed (${res.status}): ${body.slice(0, 160)}`,
+      };
+    }
+    return { configured: true, tokenOk: true, searchOk: true };
+  } catch (err) {
+    return {
+      configured: true,
+      tokenOk: false,
+      searchOk: false,
+      error: err instanceof Error ? err.message : "Spotify auth probe failed",
+    };
+  }
 }
 
 /** Public site origin for redirects (Render / reverse proxies). */
@@ -69,7 +133,7 @@ async function getAppAccessToken(): Promise<string | null> {
   }
 
   const credentials = Buffer.from(
-    `${process.env.SPOTIFY_CLIENT_ID}:${process.env.SPOTIFY_CLIENT_SECRET}`,
+    `${spotifyClientId()}:${spotifyClientSecret()}`,
   ).toString("base64");
 
   const res = await fetch(`${SPOTIFY_ACCOUNTS}/api/token`, {
@@ -79,11 +143,14 @@ async function getAppAccessToken(): Promise<string | null> {
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body: "grant_type=client_credentials",
+    signal: AbortSignal.timeout(10_000),
     cache: "no-store",
   });
 
   if (!res.ok) {
-    console.error("Spotify token error", await res.text());
+    console.error("Spotify token error", res.status, await res.text());
+    // Drop bad cache so the next call retries with fresh credentials.
+    globalSpotify.spotifyAppToken = undefined;
     return null;
   }
 
@@ -229,7 +296,7 @@ export async function searchTracks(query: string): Promise<{
 
 export function getSpotifyAuthUrl(state: string, redirectUri: string) {
   const params = new URLSearchParams({
-    client_id: process.env.SPOTIFY_CLIENT_ID!,
+    client_id: spotifyClientId(),
     response_type: "code",
     redirect_uri: redirectUri,
     scope:
@@ -241,6 +308,68 @@ export function getSpotifyAuthUrl(state: string, redirectUri: string) {
   return `${SPOTIFY_ACCOUNTS}/authorize?${params}`;
 }
 
+/**
+ * Find a bare Spotify track id for a title + artist (for iTunes/manual winners).
+ */
+export async function resolveSpotifyTrackId(
+  name: string,
+  artists: string,
+): Promise<string | null> {
+  const q = `${name} ${artists}`.trim();
+  if (!q) return null;
+  try {
+    const tracks = await searchSpotifyCatalog(q, 5);
+    if (tracks.length === 0) return null;
+
+    const norm = (s: string) =>
+      s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const wantTitle = norm(name);
+    const wantArtist = norm(artists);
+
+    const exact = tracks.find(
+      (t) =>
+        norm(t.title) === wantTitle &&
+        (norm(t.artists).includes(wantArtist) ||
+          wantArtist.includes(norm(t.artists))),
+    );
+    const byTitle = tracks.find((t) => norm(t.title) === wantTitle);
+    const pick = exact ?? byTitle ?? tracks[0];
+    return pick.externalId && isSpotifyTrackId(pick.externalId)
+      ? pick.externalId
+      : null;
+  } catch (err) {
+    console.error("resolveSpotifyTrackId failed", err);
+    return null;
+  }
+}
+
+/** Map a list of songs to Spotify track ids, resolving iTunes/manual when needed. */
+export async function resolveExportTrackIds(
+  songs: { name: string; artists: string; spotifyTrackId: string }[],
+): Promise<{ trackIds: string[]; unresolved: string[] }> {
+  const trackIds: string[] = [];
+  const unresolved: string[] = [];
+  const seen = new Set<string>();
+
+  for (const song of songs) {
+    let id = isSpotifyTrackId(song.spotifyTrackId)
+      ? song.spotifyTrackId
+      : null;
+    if (!id) {
+      id = await resolveSpotifyTrackId(song.name, song.artists);
+    }
+    if (!id) {
+      unresolved.push(`${song.name} — ${song.artists}`);
+      continue;
+    }
+    if (seen.has(id)) continue;
+    seen.add(id);
+    trackIds.push(id);
+  }
+
+  return { trackIds, unresolved };
+}
+
 export async function exchangeCodeForTokens(
   code: string,
   redirectUri: string,
@@ -248,7 +377,7 @@ export async function exchangeCodeForTokens(
   if (!spotifyConfigured()) return null;
 
   const credentials = Buffer.from(
-    `${process.env.SPOTIFY_CLIENT_ID}:${process.env.SPOTIFY_CLIENT_SECRET}`,
+    `${spotifyClientId()}:${spotifyClientSecret()}`,
   ).toString("base64");
 
   const res = await fetch(`${SPOTIFY_ACCOUNTS}/api/token`, {

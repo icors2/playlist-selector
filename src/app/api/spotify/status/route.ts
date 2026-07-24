@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { spotifyConfigured } from "@/lib/spotify";
+import { spotifyAppAuthStatus } from "@/lib/spotify";
 
 export async function GET() {
-  return NextResponse.json({ configured: spotifyConfigured() });
+  const status = await spotifyAppAuthStatus();
+  return NextResponse.json(status);
 }

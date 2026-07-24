@@ -149,10 +149,22 @@ export function RoomClient({ code }: { code: string }) {
         }
 
         await refresh();
-        const { data: status } = await fetchJson<{ configured?: boolean }>(
-          "/api/spotify/status",
-        );
-        if (alive) setSpotifyReady(Boolean(status.configured));
+        const { data: status } = await fetchJson<{
+          configured?: boolean;
+          tokenOk?: boolean;
+          searchOk?: boolean;
+          error?: string;
+        }>("/api/spotify/status");
+        if (alive) {
+          // Ready for OAuth export when credentials exist; search may still be down.
+          setSpotifyReady(Boolean(status.configured));
+          if (status.configured && status.searchOk === false) {
+            setError(
+              status.error ||
+                "Spotify search isn’t working (Client Credentials). Nominations may use iTunes until Render env secrets are fixed — export will try to match titles.",
+            );
+          }
+        }
       } catch (err) {
         if (alive) {
           setError(err instanceof Error ? err.message : "Failed to load room");
@@ -1287,6 +1299,17 @@ export function RoomClient({ code }: { code: string }) {
               <p className="mt-4 text-sm text-amber">
                 Spotify env vars missing on Render — search may use iTunes
                 backup, and playlist update will stay unavailable.
+              </p>
+            ) : null}
+
+            {state.consensus.playlist.some(
+              (s) =>
+                !s.spotifyTrackId || s.spotifyTrackId.includes(":"),
+            ) ? (
+              <p className="mt-4 text-sm text-amber">
+                Some winners aren’t stored as Spotify track IDs (often from
+                iTunes fallback). Export will try to match them on Spotify
+                when you click the button.
               </p>
             ) : null}
 
