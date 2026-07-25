@@ -1,0 +1,52 @@
+# Okaylist — Render Blueprint (free tier)
+# Dashboard: New → Blueprint → connect this repo / branch
+# Docs: https://render.com/docs/blueprint-spec
+#
+# Spotify Developer Dashboard → Redirect URIs (exact match):
+#   https://<your-service>.onrender.com/api/spotify/export
+#   http://localhost:3000/api/spotify/export   (local only)
+#
+# Env vars to set in Render (sync: false below):
+#   NEXT_PUBLIC_APP_URL      = https://<your-service>.onrender.com
+#   SPOTIFY_CLIENT_ID        = from Spotify Dashboard
+#   SPOTIFY_CLIENT_SECRET    = from Spotify Dashboard
+#   ROOM_ACCESS_PASSWORD     = password to create rooms (optional; app has a default)
+# DATABASE_URL is wired automatically from okaylist-db.
+
+databases:
+  - name: okaylist-db
+    plan: free
+    region: oregon
+    databaseName: okaylist
+    user: okaylist
+    postgresMajorVersion: "16"
+
+services:
+  - type: web
+    name: okaylist
+    runtime: node
+    region: oregon
+    plan: free
+    branch: cursor/spotify-primary-search-ba17
+    autoDeployTrigger: commit
+    # Free tier: no preDeployCommand.
+    # Migrate during build (DB is available). Start Next immediately on boot;
+    # seed runs in the background so the port binds for health checks.
+    buildCommand: npm ci && npm run build && npm run db:migrate
+    startCommand: bash scripts/start.sh
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: okaylist-db
+          property: connectionString
+      - key: NEXT_PUBLIC_APP_URL
+        sync: false
+      - key: SPOTIFY_CLIENT_ID
+        sync: false
+      - key: SPOTIFY_CLIENT_SECRET
+        sync: false
+      - key: ROOM_ACCESS_PASSWORD
+        sync: false

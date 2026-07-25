@@ -1,0 +1,844 @@
+import type { CatalogTrack } from "./catalog-data";
+import {
+  DEMO_TRACKS,
+  searchDemoTracks,
+  type TrackResult,
+} from "./demo-tracks";
+
+const SPOTIFY_ACCOUNTS = "https://accounts.spotify.com";
+const SPOTIFY_API = "https://api.spotify.com/v1";
+
+type TokenCache = {
+  accessToken: string;
+  expiresAt: number;
+};
+
+const globalSpotify = globalThis as unknown as {
+  spotifyAppToken?: TokenCache;
+};
+
+function spotifyClientId() {
+  return process.env.SPOTIFY_CLIENT_ID?.trim() || "";
+}
+
+function spotifyClientSecret() {
+  return process.env.SPOTIFY_CLIENT_SECRET?.trim() || "";
+}
+
+export function spotifyConfigured() {
+  return Boolean(spotifyClientId() && spotifyClientSecret());
+}
+
+/** Probe Client Credentials — used by /api/spotify/status. */
+export async function spotifyAppAuthStatus(): Promise<{
+  configured: boolean;
+  tokenOk: boolean;
+  searchOk: boolean;
+  probeVersion: string;
+  sampleTrackId?: string;
+  error?: string;
+}> {
+  const probeVersion = "2026-07-24c";
+  if (!spotifyConfigured()) {
+    return {
+      configured: false,
+      tokenOk: false,
+      searchOk: false,
+      probeVersion,
+      error: "SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET missing",
+    };
+  }
+
+  let tokenOk = false;
+  try {
+    const token = await getAppAccessToken();
+    tokenOk = Boolean(token);
+    if (!token) {
+      return {
+        configured: true,
+        tokenOk: false,
+        searchOk: false,
+        probeVersion,
+        error:
+          "Spotify rejected Client Credentials. Check Client ID/Secret (no extra spaces) in Render env vars.",
+      };
+    }
+
+    // Use the same search helper as the app (not a separate fetch).
+    const tracks = await searchSpotifyCatalog("mr brightside", 1);
+    if (tracks.length === 0) {
+      return {
+        configured: true,
+        tokenOk: true,
+        searchOk: false,
+        probeVersion,
+        error:
+          "Spotify search returned no tracks (check SPOTIFY_MARKET / app access)",
+      };
+    }
+    return {
+      configured: true,
+      tokenOk: true,
+      searchOk: true,
+      probeVersion,
+      sampleTrackId: tracks[0]?.externalId ?? undefined,
+    };
+  } catch (err) {
+    return {
+      configured: true,
+      tokenOk,
+      searchOk: false,
+      probeVersion,
+      error: err instanceof Error ? err.message : "Spotify auth probe failed",
+    };
+  }
+}
+
+/** Public site origin for redirects (Render / reverse proxies). */
+export function publicAppBase(request: Request): string {
+  const fromEnv = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/$/, "");
+  if (fromEnv) return fromEnv;
+
+  const forwardedHost = request.headers
+    .get("x-forwarded-host")
+    ?.split(",")[0]
+    ?.trim();
+  const host =
+    forwardedHost ||
+    request.headers.get("host") ||
+    new URL(request.url).host;
+
+  let proto = request.headers
+    .get("x-forwarded-proto")
+    ?.split(",")[0]
+    ?.trim();
+  if (!proto) {
+    proto =
+      host.includes("localhost") || host.startsWith("127.") ? "http" : "https";
+  }
+  // TLS terminates at the edge on Render.
+  if (host.endsWith(".onrender.com")) proto = "https";
+
+  return `${proto}://${host}`;
+}
+
+/** Must match Spotify Dashboard redirect URI exactly. */
+export function spotifyRedirectUri(request: Request): string {
+  return `${publicAppBase(request)}/api/spotify/export`;
+}
+
+export const SPOTIFY_REDIRECT_COOKIE = "spotify_oauth_redirect";
+/** OAuth `state` payload for the same-origin authorize hop. */
+export const SPOTIFY_STATE_COOKIE = "spotify_oauth_state";
+
+async function getAppAccessToken(): Promise<string | null> {
+  if (!spotifyConfigured()) return null;
+
+  const cached = globalSpotify.spotifyAppToken;
+  if (cached && cached.expiresAt > Date.now() + 30_000) {
+    return cached.accessToken;
+  }
+
+  const credentials = Buffer.from(
+    `${spotifyClientId()}:${spotifyClientSecret()}`,
+  ).toString("base64");
+
+  const res = await fetch(`${SPOTIFY_ACCOUNTS}/api/token`, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${credentials}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: "grant_type=client_credentials",
+    signal: AbortSignal.timeout(10_000),
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    console.error("Spotify token error", res.status, await res.text());
+    // Drop bad cache so the next call retries with fresh credentials.
+    globalSpotify.spotifyAppToken = undefined;
+    return null;
+  }
+
+  const data = (await res.json()) as {
+    access_token: string;
+    expires_in: number;
+  };
+
+  globalSpotify.spotifyAppToken = {
+    accessToken: data.access_token,
+    expiresAt: Date.now() + data.expires_in * 1000,
+  };
+
+  return data.access_token;
+}
+
+function mapTrack(track: {
+  id: string;
+  name: string;
+  artists: { name: string }[];
+  album?: { images?: { url: string }[] };
+  preview_url: string | null;
+  duration_ms: number;
+  uri: string;
+}): TrackResult {
+  return {
+    id: track.id,
+    name: track.name,
+    artists: track.artists.map((a) => a.name).join(", "),
+    albumArt: track.album?.images?.[1]?.url ?? track.album?.images?.[0]?.url ?? null,
+    previewUrl: track.preview_url,
+    durationMs: track.duration_ms,
+    uri: track.uri,
+  };
+}
+
+type SpotifySearchItem = {
+  id: string;
+  name: string;
+  artists: { name: string }[];
+  album?: {
+    name?: string;
+    release_date?: string;
+    images?: { url: string }[];
+  };
+  preview_url: string | null;
+  duration_ms: number;
+  uri: string;
+};
+
+function yearFromReleaseDate(date: string | undefined): number | null {
+  if (!date) return null;
+  const year = Number(date.slice(0, 4));
+  return Number.isFinite(year) ? year : null;
+}
+
+/**
+ * Spotify Search via Client Credentials (no user login).
+ * Throws when credentials are missing or the API fails — callers can fall back.
+ */
+export async function searchSpotifyCatalog(
+  query: string,
+  limit = 20,
+): Promise<CatalogTrack[]> {
+  const term = query.trim();
+  if (!term) return [];
+
+  const token = await getAppAccessToken();
+  if (!token) {
+    throw new Error("Spotify credentials are not configured");
+  }
+
+  const market =
+    process.env.SPOTIFY_MARKET?.trim() ||
+    process.env.SPOTIFY_DEFAULT_MARKET?.trim() ||
+    "US";
+
+  // Spotify Web API rejects some Client Credentials searches with
+  // "Invalid limit" when limit is too high for the app/token type.
+  // Keep this conservative; status/debug probes with 1–3 already work.
+  const pageSize = Math.min(10, Math.max(1, Number(limit) || 10));
+
+  const params = new URLSearchParams({
+    q: term,
+    type: "track",
+    limit: String(pageSize),
+    market,
+  });
+
+  const res = await fetch(`${SPOTIFY_API}/search?${params}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(12_000),
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    // Invalid/expired token — clear cache so the next call re-auths.
+    if (res.status === 401 || res.status === 403) {
+      globalSpotify.spotifyAppToken = undefined;
+    }
+    throw new Error(
+      `Spotify search failed (${res.status}) ${body.slice(0, 200)}`,
+    );
+  }
+
+  const data = (await res.json()) as {
+    tracks?: { items?: (SpotifySearchItem | null)[] };
+  };
+
+  const seen = new Set<string>();
+  const tracks: CatalogTrack[] = [];
+  for (const track of data.tracks?.items ?? []) {
+    try {
+      if (!track?.id || !track.name) continue;
+      const artists = (track.artists ?? [])
+        .map((a) => a?.name?.trim())
+        .filter((name): name is string => Boolean(name))
+        .join(", ");
+      if (!artists) continue;
+      const key = `${track.name.toLowerCase()}::${artists.toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      tracks.push({
+        id: `spotify-${track.id}`,
+        title: track.name,
+        artists,
+        album: track.album?.name ?? null,
+        year: yearFromReleaseDate(track.album?.release_date),
+        genre: null,
+        albumArt:
+          track.album?.images?.[1]?.url ??
+          track.album?.images?.[0]?.url ??
+          null,
+        durationMs: track.duration_ms ?? 0,
+        // Bare Spotify track id — used for playlist export.
+        externalId: track.id,
+        previewUrl: track.preview_url ?? null,
+      });
+    } catch (itemErr) {
+      console.error("Skipping malformed Spotify search item", itemErr);
+    }
+  }
+  return tracks;
+}
+
+export async function searchTracks(query: string): Promise<{
+  tracks: TrackResult[];
+  demo: boolean;
+  error?: string;
+}> {
+  try {
+    const catalog = await searchSpotifyCatalog(query || "party hits", 10);
+    return {
+      tracks: catalog.map((t) => ({
+        id: t.externalId ?? t.id,
+        name: t.title,
+        artists: t.artists,
+        albumArt: t.albumArt,
+        previewUrl: t.previewUrl ?? null,
+        durationMs: t.durationMs,
+        uri: t.externalId ? `spotify:track:${t.externalId}` : t.id,
+      })),
+      demo: false,
+    };
+  } catch (err) {
+    console.error("Spotify search error", err);
+    return {
+      tracks: searchDemoTracks(query),
+      demo: true,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export function getSpotifyAuthUrl(state: string, redirectUri: string) {
+  const params = new URLSearchParams({
+    client_id: spotifyClientId(),
+    response_type: "code",
+    redirect_uri: redirectUri,
+    scope:
+      "playlist-modify-public playlist-modify-private playlist-read-private playlist-read-collaborative user-read-email",
+    state,
+    // Always show Spotify's Agree screen so the host can confirm access.
+    show_dialog: "true",
+  });
+  return `${SPOTIFY_ACCOUNTS}/authorize?${params}`;
+}
+
+/**
+ * Find a bare Spotify track id for a title + artist (for iTunes/manual winners).
+ */
+export async function resolveSpotifyTrackId(
+  name: string,
+  artists: string,
+): Promise<string | null> {
+  const q = `${name} ${artists}`.trim();
+  if (!q) return null;
+  try {
+    const tracks = await searchSpotifyCatalog(q, 5);
+    if (tracks.length === 0) return null;
+
+    const norm = (s: string) =>
+      s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const wantTitle = norm(name);
+    const wantArtist = norm(artists);
+
+    const exact = tracks.find(
+      (t) =>
+        norm(t.title) === wantTitle &&
+        (norm(t.artists).includes(wantArtist) ||
+          wantArtist.includes(norm(t.artists))),
+    );
+    const byTitle = tracks.find((t) => norm(t.title) === wantTitle);
+    const pick = exact ?? byTitle ?? tracks[0];
+    return pick.externalId && isSpotifyTrackId(pick.externalId)
+      ? pick.externalId
+      : null;
+  } catch (err) {
+    console.error("resolveSpotifyTrackId failed", err);
+    return null;
+  }
+}
+
+/** Map a list of songs to Spotify track ids, resolving iTunes/manual when needed. */
+export async function resolveExportTrackIds(
+  songs: { name: string; artists: string; spotifyTrackId: string }[],
+): Promise<{ trackIds: string[]; unresolved: string[] }> {
+  const trackIds: string[] = [];
+  const unresolved: string[] = [];
+  const seen = new Set<string>();
+
+  for (const song of songs) {
+    let id = isSpotifyTrackId(song.spotifyTrackId)
+      ? song.spotifyTrackId
+      : null;
+    if (!id) {
+      id = await resolveSpotifyTrackId(song.name, song.artists);
+    }
+    if (!id) {
+      unresolved.push(`${song.name} — ${song.artists}`);
+      continue;
+    }
+    if (seen.has(id)) continue;
+    seen.add(id);
+    trackIds.push(id);
+  }
+
+  return { trackIds, unresolved };
+}
+
+export async function exchangeCodeForTokens(
+  code: string,
+  redirectUri: string,
+): Promise<{ accessToken: string; refreshToken: string } | null> {
+  if (!spotifyConfigured()) return null;
+
+  const credentials = Buffer.from(
+    `${spotifyClientId()}:${spotifyClientSecret()}`,
+  ).toString("base64");
+
+  const res = await fetch(`${SPOTIFY_ACCOUNTS}/api/token`, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${credentials}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: redirectUri,
+    }),
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    console.error(
+      "Spotify code exchange error",
+      { redirectUri, status: res.status },
+      await res.text(),
+    );
+    return null;
+  }
+
+  const data = (await res.json()) as {
+    access_token: string;
+    refresh_token: string;
+  };
+
+  return { accessToken: data.access_token, refreshToken: data.refresh_token };
+}
+
+/** True for bare Spotify track ids (not itunes:/manual: prefixed). */
+export function isSpotifyTrackId(id: string | null | undefined): id is string {
+  if (!id) return false;
+  if (id.includes(":")) return false;
+  return /^[0-9A-Za-z]{10,30}$/.test(id);
+}
+
+/** Extract a Spotify playlist ID from a URL, URI, or raw ID. */
+export function parsePlaylistId(input: string): string | null {
+  const value = input.trim();
+  if (!value) return null;
+
+  const uriMatch = value.match(/^spotify:playlist:([a-zA-Z0-9]+)$/);
+  if (uriMatch) return uriMatch[1];
+
+  try {
+    const url = new URL(value);
+    const parts = url.pathname.split("/").filter(Boolean);
+    const playlistIndex = parts.indexOf("playlist");
+    if (playlistIndex >= 0 && parts[playlistIndex + 1]) {
+      return parts[playlistIndex + 1];
+    }
+  } catch {
+    // not a URL
+  }
+
+  if (/^[a-zA-Z0-9]{16,}$/.test(value)) return value;
+  return null;
+}
+
+export async function fetchPlaylistTracks(playlistUrlOrId: string): Promise<
+  | {
+      id: string;
+      name: string;
+      url: string;
+      tracks: TrackResult[];
+    }
+  | { error: string }
+> {
+  if (!spotifyConfigured()) {
+    return {
+      error:
+        "Spotify API keys are required to import a playlist. Add SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET on Render.",
+    };
+  }
+
+  const playlistId = parsePlaylistId(playlistUrlOrId);
+  if (!playlistId) {
+    return { error: "That doesn’t look like a Spotify playlist link." };
+  }
+
+  const token = await getAppAccessToken();
+  if (!token) {
+    return { error: "Could not authenticate with Spotify." };
+  }
+
+  const metaRes = await fetch(`${SPOTIFY_API}/playlists/${playlistId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+
+  if (!metaRes.ok) {
+    const text = await metaRes.text();
+    console.error("Spotify playlist meta error", text);
+    if (metaRes.status === 404) {
+      return {
+        error:
+          "Playlist not found. Make sure it’s public (or that the link is correct).",
+      };
+    }
+    return { error: "Could not load that Spotify playlist." };
+  }
+
+  const meta = (await metaRes.json()) as {
+    id: string;
+    name: string;
+    external_urls?: { spotify?: string };
+  };
+
+  // Spotify Dev Mode (Mar 2026+): /items. Legacy/extended quota: /tracks.
+  const tracks = await readPlaylistItems(token, playlistId);
+
+  return {
+    id: meta.id,
+    name: meta.name,
+    url:
+      meta.external_urls?.spotify ??
+      `https://open.spotify.com/playlist/${meta.id}`,
+    tracks,
+  };
+}
+
+type PlaylistTrackRow = Parameters<typeof mapTrack>[0];
+
+/** Read playlist contents via /items (new) or /tracks (legacy). */
+async function readPlaylistItems(
+  accessToken: string,
+  playlistId: string,
+): Promise<TrackResult[]> {
+  const attempts = [
+    {
+      path: "items",
+      fields:
+        "next,total,items(item(id,name,artists(name),album(images),preview_url,duration_ms,uri))",
+      pick: (row: { item?: PlaylistTrackRow | null; track?: PlaylistTrackRow | null }) =>
+        row.item ?? row.track ?? null,
+    },
+    {
+      path: "tracks",
+      fields:
+        "next,total,items(track(id,name,artists(name),album(images),preview_url,duration_ms,uri))",
+      pick: (row: { item?: PlaylistTrackRow | null; track?: PlaylistTrackRow | null }) =>
+        row.track ?? row.item ?? null,
+    },
+  ] as const;
+
+  for (const attempt of attempts) {
+    const tracks: TrackResult[] = [];
+    let nextUrl: string | null =
+      `${SPOTIFY_API}/playlists/${playlistId}/${attempt.path}?limit=100&fields=${attempt.fields}`;
+    let ok = true;
+
+    while (nextUrl) {
+      const pageRes = await fetch(nextUrl, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        cache: "no-store",
+      });
+      if (!pageRes.ok) {
+        console.error(
+          `Spotify playlist ${attempt.path} error`,
+          pageRes.status,
+          await pageRes.text(),
+        );
+        ok = false;
+        break;
+      }
+
+      const page = (await pageRes.json()) as {
+        next: string | null;
+        items: {
+          item?: PlaylistTrackRow | null;
+          track?: PlaylistTrackRow | null;
+        }[];
+      };
+
+      for (const row of page.items ?? []) {
+        const track = attempt.pick(row);
+        if (track?.id) tracks.push(mapTrack(track));
+      }
+      nextUrl = page.next;
+    }
+
+    if (ok) return tracks;
+  }
+
+  return [];
+}
+
+async function playlistTrackTotal(
+  accessToken: string,
+  playlistId: string,
+): Promise<number | null> {
+  for (const path of ["items", "tracks"] as const) {
+    const res = await fetch(
+      `${SPOTIFY_API}/playlists/${playlistId}/${path}?limit=1&fields=total`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        cache: "no-store",
+      },
+    );
+    if (!res.ok) {
+      console.error(
+        `Spotify playlist total (${path}) error`,
+        res.status,
+        await res.text(),
+      );
+      continue;
+    }
+    const data = (await res.json()) as { total?: number };
+    if (typeof data.total === "number") return data.total;
+  }
+  return null;
+}
+
+/**
+ * Replace playlist contents.
+ * Spotify Dev Mode (March 2026+) uses /items; extended quota still has /tracks.
+ */
+async function replacePlaylistTracks(
+  accessToken: string,
+  playlistId: string,
+  trackIds: string[],
+): Promise<{ ok: boolean; error?: string; written?: number; path?: string }> {
+  const uris = trackIds.map((id) => `spotify:track:${id}`);
+  const first = uris.slice(0, 100);
+  const paths = ["items", "tracks"] as const;
+  let lastError = "Couldn’t update playlist.";
+
+  for (const path of paths) {
+    const replaceRes = await fetch(
+      `${SPOTIFY_API}/playlists/${playlistId}/${path}`,
+      {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ uris: first }),
+      },
+    );
+
+    if (!replaceRes.ok) {
+      const body = await replaceRes.text();
+      console.error(
+        `Spotify replace ${path} error`,
+        replaceRes.status,
+        body,
+      );
+      lastError = `Couldn’t update playlist (${replaceRes.status} via /${path}). Log into the Spotify account that owns it.`;
+      // Try the other path on 404/405/410 (endpoint gone/moved).
+      if ([404, 405, 410].includes(replaceRes.status)) continue;
+      return { ok: false, error: lastError };
+    }
+
+    for (let i = 100; i < uris.length; i += 100) {
+      const chunk = uris.slice(i, i + 100);
+      const addRes = await fetch(
+        `${SPOTIFY_API}/playlists/${playlistId}/${path}`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ uris: chunk }),
+        },
+      );
+      if (!addRes.ok) {
+        const body = await addRes.text();
+        console.error(`Spotify append ${path} error`, addRes.status, body);
+        return {
+          ok: false,
+          error: `Wrote some tracks but append failed (${addRes.status}).`,
+          path,
+        };
+      }
+    }
+
+    const total = await playlistTrackTotal(accessToken, playlistId);
+    console.info("Spotify playlist write ok", {
+      playlistId,
+      path,
+      expected: trackIds.length,
+      total,
+    });
+
+    if (total !== null && total < trackIds.length) {
+      return {
+        ok: false,
+        error: `Spotify reported ${total} tracks after write (expected ${trackIds.length}).`,
+        written: total,
+        path,
+      };
+    }
+
+    return {
+      ok: true,
+      written: total ?? trackIds.length,
+      path,
+    };
+  }
+
+  return { ok: false, error: lastError };
+}
+
+export async function createSpotifyPlaylist(options: {
+  accessToken: string;
+  name: string;
+  description: string;
+  trackIds: string[];
+  /** When set, rewrite this existing playlist instead of creating a new one. */
+  existingPlaylistId?: string | null;
+}): Promise<{
+  id: string;
+  url: string;
+  created: boolean;
+  trackCount: number;
+  error?: string;
+} | null> {
+  // Prefer the linked playlist — never silently write somewhere else.
+  if (options.existingPlaylistId) {
+    const result = await replacePlaylistTracks(
+      options.accessToken,
+      options.existingPlaylistId,
+      options.trackIds,
+    );
+    if (!result.ok) {
+      console.warn(
+        "Spotify update of linked playlist failed",
+        options.existingPlaylistId,
+        result.error,
+      );
+      return {
+        id: options.existingPlaylistId,
+        url: `https://open.spotify.com/playlist/${options.existingPlaylistId}`,
+        created: false,
+        trackCount: result.written ?? 0,
+        error: result.error,
+      };
+    }
+    return {
+      id: options.existingPlaylistId,
+      url: `https://open.spotify.com/playlist/${options.existingPlaylistId}`,
+      created: false,
+      trackCount: result.written ?? options.trackIds.length,
+    };
+  }
+
+  // Dev Mode (2026): POST /me/playlists. Legacy: POST /users/{id}/playlists.
+  let playlistRes = await fetch(`${SPOTIFY_API}/me/playlists`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${options.accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      name: options.name,
+      description: options.description,
+      public: false,
+    }),
+  });
+
+  if (!playlistRes.ok && [404, 405, 410].includes(playlistRes.status)) {
+    const meRes = await fetch(`${SPOTIFY_API}/me`, {
+      headers: { Authorization: `Bearer ${options.accessToken}` },
+      cache: "no-store",
+    });
+    if (!meRes.ok) {
+      console.error("Spotify me error", await meRes.text());
+      return null;
+    }
+    const me = (await meRes.json()) as { id: string };
+    playlistRes = await fetch(`${SPOTIFY_API}/users/${me.id}/playlists`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${options.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: options.name,
+        description: options.description,
+        public: false,
+      }),
+    });
+  }
+
+  if (!playlistRes.ok) {
+    console.error("Spotify create playlist error", await playlistRes.text());
+    return null;
+  }
+
+  const playlist = (await playlistRes.json()) as {
+    id: string;
+    external_urls: { spotify: string };
+  };
+
+  const result = await replacePlaylistTracks(
+    options.accessToken,
+    playlist.id,
+    options.trackIds,
+  );
+  if (!result.ok && options.trackIds.length > 0) {
+    return {
+      id: playlist.id,
+      url: playlist.external_urls.spotify,
+      created: true,
+      trackCount: result.written ?? 0,
+      error: result.error,
+    };
+  }
+
+  return {
+    id: playlist.id,
+    url: playlist.external_urls.spotify,
+    created: true,
+    trackCount: result.written ?? options.trackIds.length,
+  };
+}
+
+export function getDemoTrackById(id: string) {
+  return DEMO_TRACKS.find((t) => t.id === id) ?? null;
+}
