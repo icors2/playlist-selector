@@ -64,7 +64,7 @@ export function RoomClient({ code }: { code: string }) {
   const [searching, setSearching] = useState(false);
   const [newSongIds, setNewSongIds] = useState<Set<string>>(new Set());
   const [playlistUrl, setPlaylistUrl] = useState(
-    "https://open.spotify.com/playlist/5GZfxd5LeJg0rH2tVcXRcB",
+    "https://open.spotify.com/playlist/5GZfxd5LeJg0rH2tVcXRcB?si=PkkG9DGdSUKedxzP0WFGfQ",
   );
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [spotifyReady, setSpotifyReady] = useState<boolean | null>(null);
