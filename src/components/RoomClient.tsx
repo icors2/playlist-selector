@@ -51,7 +51,6 @@ export function RoomClient({ code }: { code: string }) {
   const [copied, setCopied] = useState(false);
   const [listCopied, setListCopied] = useState(false);
   const [joinName, setJoinName] = useState("");
-  const [joinPassword, setJoinPassword] = useState("");
   const [joinError, setJoinError] = useState<string | null>(null);
   const [songTitle, setSongTitle] = useState("");
   const [songArtist, setSongArtist] = useState("");
@@ -439,7 +438,6 @@ export function RoomClient({ code }: { code: string }) {
           action: "join",
           code: roomCode,
           name: joinName,
-          password: joinPassword,
         }),
       });
       if (!res.ok || !data.code || !data.participantToken) {
@@ -618,16 +616,6 @@ export function RoomClient({ code }: { code: string }) {
               placeholder="Your name"
               required
               maxLength={40}
-            />
-            <input
-              className="field"
-              type="password"
-              value={joinPassword}
-              onChange={(e) => setJoinPassword(e.target.value)}
-              placeholder="Room password"
-              required
-              autoComplete="current-password"
-              maxLength={200}
             />
             <button className="btn-primary" type="submit">
               Join room

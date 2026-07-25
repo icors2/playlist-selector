@@ -1,4 +1,4 @@
-/** Shared password required to create or join a room. */
+/** Shared password required to create a room (join only needs the code). */
 export function expectedRoomPassword() {
   return process.env.ROOM_ACCESS_PASSWORD?.trim() || "Momrules1!";
 }

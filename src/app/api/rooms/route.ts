@@ -14,7 +14,6 @@ const joinSchema = z.object({
   action: z.literal("join"),
   code: z.string().min(4).max(8),
   name: z.string().min(1).max(40),
-  password: z.string().min(1).max(200),
 });
 
 export async function POST(request: Request) {
@@ -45,12 +44,6 @@ export async function POST(request: Request) {
 
     if (action === "join") {
       const parsed = joinSchema.parse(body);
-      if (!roomPasswordOk(parsed.password)) {
-        return NextResponse.json(
-          { error: "Incorrect room password" },
-          { status: 401 },
-        );
-      }
       const result = await joinRoom(parsed.code, parsed.name);
       if ("error" in result) {
         return NextResponse.json({ error: result.error }, { status: 400 });

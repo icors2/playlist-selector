@@ -78,7 +78,6 @@ export function HomeClient() {
           action: "join",
           code: joinCode.trim().toUpperCase(),
           name: joinName,
-          password,
         }),
       });
       if (!res.ok || !data.code || !data.participantToken) {
@@ -205,19 +204,6 @@ export function HomeClient() {
                     placeholder="Sam"
                     required
                     maxLength={40}
-                  />
-                </label>
-                <label className="grid gap-1.5 text-sm text-paper-dim">
-                  Room password
-                  <input
-                    className="field"
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Password"
-                    required
-                    autoComplete="current-password"
-                    maxLength={200}
                   />
                 </label>
                 <button className="btn-primary mt-2" disabled={loading}>
