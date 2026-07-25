@@ -22,6 +22,7 @@ export function HomeClient() {
   const [hostName, setHostName] = useState("");
   const [joinCode, setJoinCode] = useState("");
   const [joinName, setJoinName] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,6 +43,7 @@ export function HomeClient() {
           action: "create",
           roomName,
           hostName,
+          password,
         }),
       });
       if (!res.ok || !data.code || !data.participantToken || !data.hostToken) {
@@ -76,6 +78,7 @@ export function HomeClient() {
           action: "join",
           code: joinCode.trim().toUpperCase(),
           name: joinName,
+          password,
         }),
       });
       if (!res.ok || !data.code || !data.participantToken) {
@@ -163,6 +166,19 @@ export function HomeClient() {
                     maxLength={80}
                   />
                 </label>
+                <label className="grid gap-1.5 text-sm text-paper-dim">
+                  Room password
+                  <input
+                    className="field"
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Password"
+                    required
+                    autoComplete="current-password"
+                    maxLength={200}
+                  />
+                </label>
                 <button className="btn-primary mt-2" disabled={loading}>
                   {loading ? "Waking server & opening room…" : "Create room"}
                 </button>
@@ -189,6 +205,19 @@ export function HomeClient() {
                     placeholder="Sam"
                     required
                     maxLength={40}
+                  />
+                </label>
+                <label className="grid gap-1.5 text-sm text-paper-dim">
+                  Room password
+                  <input
+                    className="field"
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Password"
+                    required
+                    autoComplete="current-password"
+                    maxLength={200}
                   />
                 </label>
                 <button className="btn-primary mt-2" disabled={loading}>
