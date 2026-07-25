@@ -82,6 +82,16 @@ export async function POST(request: Request) {
       );
     }
 
+    if (!state.room.spotifyPlaylistId) {
+      return NextResponse.json(
+        {
+          error:
+            "Link your Spotify playlist first (on the results page or in the lobby), then submit again.",
+        },
+        { status: 400 },
+      );
+    }
+
     // Resolve iTunes/manual winners to Spotify ids up front so we fail
     // before sending the host through OAuth when search is broken.
     const { trackIds } = await resolveExportTrackIds(consensus.playlist);
@@ -176,6 +186,12 @@ export async function GET(request: Request) {
       return response;
     }
 
+    if (!roomState.room.spotifyPlaylistId) {
+      const response = roomRedirect(appBase, parsed.code, "no_link");
+      clearRedirectCookie(response);
+      return response;
+    }
+
     const consensus = buildConsensus(
       roomState.songs,
       roomState.participants.length,
@@ -189,12 +205,18 @@ export async function GET(request: Request) {
       return response;
     }
 
+    console.info("Spotify writing tracks", {
+      playlistId: roomState.room.spotifyPlaylistId,
+      trackCount: trackIds.length,
+      trackIds: trackIds.slice(0, 5),
+    });
+
     const playlist = await createSpotifyPlaylist({
       accessToken: tokens.accessToken,
       name: roomState.room.name,
       description: `Built with Okaylist — songs the group approved. Room ${roomState.room.code}.`,
       trackIds,
-      // Rewrite the group's existing playlist when one was linked/imported.
+      // Always rewrite the linked playlist (never create a silent alternate).
       existingPlaylistId: roomState.room.spotifyPlaylistId,
     });
 
@@ -212,9 +234,7 @@ export async function GET(request: Request) {
     }
 
     await savePlaylistLink(parsed.code, parsed.hostToken, playlist);
-    const status = playlist.created
-      ? `created_${playlist.trackCount}`
-      : `success_${playlist.trackCount}`;
+    const status = `success_${playlist.trackCount}`;
     const response = roomRedirect(appBase, parsed.code, status);
     clearRedirectCookie(response);
     return response;

@@ -153,6 +153,10 @@ export function RoomClient({ code }: { code: string }) {
           setError(
             "Couldn’t write to your linked Spotify playlist. Agree while logged into the Spotify account that owns it, and make sure the playlist was linked before export.",
           );
+        } else if (spotifyStatus === "no_link") {
+          setError(
+            "No Spotify playlist linked. Paste your playlist URL and tap Link playlist, then submit again.",
+          );
         } else if (spotifyStatus === "empty_write") {
           setError(
             "Spotify login worked but the playlist still has 0 tracks. Check playlist ownership and try again.",
@@ -799,9 +803,9 @@ export function RoomClient({ code }: { code: string }) {
           <div className="panel p-5 sm:p-6">
             <h2 className="font-display text-2xl font-bold">Nominate songs</h2>
             <p className="mt-1 text-sm text-paper-dim">
-              Search Spotify first (falls back to iTunes if Spotify is down).
-              Prefer Spotify results so winners can be written back to your
-              playlist. You can keep adding after voting starts.
+              Everyone who joined can add songs from their own phone — share the
+              invite. Search Spotify first (iTunes backup if needed) so winners
+              can be written to your playlist.
             </p>
 
             {state.isHost ? (

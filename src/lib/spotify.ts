@@ -529,32 +529,8 @@ export async function fetchPlaylistTracks(playlistUrlOrId: string): Promise<
     external_urls?: { spotify?: string };
   };
 
-  const tracks: TrackResult[] = [];
-  let nextUrl: string | null =
-    `${SPOTIFY_API}/playlists/${playlistId}/tracks?limit=100&fields=next,items(track(id,name,artists(name),album(images),preview_url,duration_ms,uri))`;
-
-  while (nextUrl) {
-    const pageRes: Response = await fetch(nextUrl, {
-      headers: { Authorization: `Bearer ${token}` },
-      cache: "no-store",
-    });
-    if (!pageRes.ok) {
-      console.error("Spotify playlist tracks error", await pageRes.text());
-      return { error: "Could not load playlist tracks." };
-    }
-
-    const page = (await pageRes.json()) as {
-      next: string | null;
-      items: {
-        track: Parameters<typeof mapTrack>[0] | null;
-      }[];
-    };
-
-    for (const item of page.items) {
-      if (item.track?.id) tracks.push(mapTrack(item.track));
-    }
-    nextUrl = page.next;
-  }
+  // Spotify Dev Mode (Mar 2026+): /items. Legacy/extended quota: /tracks.
+  const tracks = await readPlaylistItems(token, playlistId);
 
   return {
     id: meta.id,
@@ -566,86 +542,187 @@ export async function fetchPlaylistTracks(playlistUrlOrId: string): Promise<
   };
 }
 
+type PlaylistTrackRow = Parameters<typeof mapTrack>[0];
+
+/** Read playlist contents via /items (new) or /tracks (legacy). */
+async function readPlaylistItems(
+  accessToken: string,
+  playlistId: string,
+): Promise<TrackResult[]> {
+  const attempts = [
+    {
+      path: "items",
+      fields:
+        "next,total,items(item(id,name,artists(name),album(images),preview_url,duration_ms,uri))",
+      pick: (row: { item?: PlaylistTrackRow | null; track?: PlaylistTrackRow | null }) =>
+        row.item ?? row.track ?? null,
+    },
+    {
+      path: "tracks",
+      fields:
+        "next,total,items(track(id,name,artists(name),album(images),preview_url,duration_ms,uri))",
+      pick: (row: { item?: PlaylistTrackRow | null; track?: PlaylistTrackRow | null }) =>
+        row.track ?? row.item ?? null,
+    },
+  ] as const;
+
+  for (const attempt of attempts) {
+    const tracks: TrackResult[] = [];
+    let nextUrl: string | null =
+      `${SPOTIFY_API}/playlists/${playlistId}/${attempt.path}?limit=100&fields=${attempt.fields}`;
+    let ok = true;
+
+    while (nextUrl) {
+      const pageRes = await fetch(nextUrl, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        cache: "no-store",
+      });
+      if (!pageRes.ok) {
+        console.error(
+          `Spotify playlist ${attempt.path} error`,
+          pageRes.status,
+          await pageRes.text(),
+        );
+        ok = false;
+        break;
+      }
+
+      const page = (await pageRes.json()) as {
+        next: string | null;
+        items: {
+          item?: PlaylistTrackRow | null;
+          track?: PlaylistTrackRow | null;
+        }[];
+      };
+
+      for (const row of page.items ?? []) {
+        const track = attempt.pick(row);
+        if (track?.id) tracks.push(mapTrack(track));
+      }
+      nextUrl = page.next;
+    }
+
+    if (ok) return tracks;
+  }
+
+  return [];
+}
+
 async function playlistTrackTotal(
   accessToken: string,
   playlistId: string,
 ): Promise<number | null> {
-  const res = await fetch(
-    `${SPOTIFY_API}/playlists/${playlistId}/tracks?limit=1&fields=total`,
-    {
-      headers: { Authorization: `Bearer ${accessToken}` },
-      cache: "no-store",
-    },
-  );
-  if (!res.ok) {
-    console.error("Spotify playlist total error", await res.text());
-    return null;
+  for (const path of ["items", "tracks"] as const) {
+    const res = await fetch(
+      `${SPOTIFY_API}/playlists/${playlistId}/${path}?limit=1&fields=total`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        cache: "no-store",
+      },
+    );
+    if (!res.ok) {
+      console.error(
+        `Spotify playlist total (${path}) error`,
+        res.status,
+        await res.text(),
+      );
+      continue;
+    }
+    const data = (await res.json()) as { total?: number };
+    if (typeof data.total === "number") return data.total;
   }
-  const data = (await res.json()) as { total?: number };
-  return typeof data.total === "number" ? data.total : null;
+  return null;
 }
 
+/**
+ * Replace playlist contents.
+ * Spotify Dev Mode (March 2026+) uses /items; extended quota still has /tracks.
+ */
 async function replacePlaylistTracks(
   accessToken: string,
   playlistId: string,
   trackIds: string[],
-): Promise<{ ok: boolean; error?: string; written?: number }> {
+): Promise<{ ok: boolean; error?: string; written?: number; path?: string }> {
   const uris = trackIds.map((id) => `spotify:track:${id}`);
-  // First page replaces; further pages append.
   const first = uris.slice(0, 100);
-  const replaceRes = await fetch(
-    `${SPOTIFY_API}/playlists/${playlistId}/tracks`,
-    {
-      method: "PUT",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ uris: first }),
-    },
-  );
-  if (!replaceRes.ok) {
-    const body = await replaceRes.text();
-    console.error("Spotify replace tracks error", replaceRes.status, body);
-    return {
-      ok: false,
-      error: `Couldn’t update playlist (${replaceRes.status}). Log into the Spotify account that owns it.`,
-    };
-  }
+  const paths = ["items", "tracks"] as const;
+  let lastError = "Couldn’t update playlist.";
 
-  for (let i = 100; i < uris.length; i += 100) {
-    const chunk = uris.slice(i, i + 100);
-    const addRes = await fetch(
-      `${SPOTIFY_API}/playlists/${playlistId}/tracks`,
+  for (const path of paths) {
+    const replaceRes = await fetch(
+      `${SPOTIFY_API}/playlists/${playlistId}/${path}`,
       {
-        method: "POST",
+        method: "PUT",
         headers: {
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ uris: chunk }),
+        body: JSON.stringify({ uris: first }),
       },
     );
-    if (!addRes.ok) {
-      const body = await addRes.text();
-      console.error("Spotify append tracks error", addRes.status, body);
+
+    if (!replaceRes.ok) {
+      const body = await replaceRes.text();
+      console.error(
+        `Spotify replace ${path} error`,
+        replaceRes.status,
+        body,
+      );
+      lastError = `Couldn’t update playlist (${replaceRes.status} via /${path}). Log into the Spotify account that owns it.`;
+      // Try the other path on 404/405/410 (endpoint gone/moved).
+      if ([404, 405, 410].includes(replaceRes.status)) continue;
+      return { ok: false, error: lastError };
+    }
+
+    for (let i = 100; i < uris.length; i += 100) {
+      const chunk = uris.slice(i, i + 100);
+      const addRes = await fetch(
+        `${SPOTIFY_API}/playlists/${playlistId}/${path}`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ uris: chunk }),
+        },
+      );
+      if (!addRes.ok) {
+        const body = await addRes.text();
+        console.error(`Spotify append ${path} error`, addRes.status, body);
+        return {
+          ok: false,
+          error: `Wrote some tracks but append failed (${addRes.status}).`,
+          path,
+        };
+      }
+    }
+
+    const total = await playlistTrackTotal(accessToken, playlistId);
+    console.info("Spotify playlist write ok", {
+      playlistId,
+      path,
+      expected: trackIds.length,
+      total,
+    });
+
+    if (total !== null && total < trackIds.length) {
       return {
         ok: false,
-        error: `Wrote some tracks but append failed (${addRes.status}).`,
+        error: `Spotify reported ${total} tracks after write (expected ${trackIds.length}).`,
+        written: total,
+        path,
       };
     }
-  }
 
-  const total = await playlistTrackTotal(accessToken, playlistId);
-  if (total !== null && total < trackIds.length) {
     return {
-      ok: false,
-      error: `Spotify reported ${total} tracks after write (expected ${trackIds.length}).`,
-      written: total,
+      ok: true,
+      written: total ?? trackIds.length,
+      path,
     };
   }
 
-  return { ok: true, written: total ?? trackIds.length };
+  return { ok: false, error: lastError };
 }
 
 export async function createSpotifyPlaylist(options: {
@@ -691,19 +768,8 @@ export async function createSpotifyPlaylist(options: {
     };
   }
 
-  const meRes = await fetch(`${SPOTIFY_API}/me`, {
-    headers: { Authorization: `Bearer ${options.accessToken}` },
-    cache: "no-store",
-  });
-
-  if (!meRes.ok) {
-    console.error("Spotify me error", await meRes.text());
-    return null;
-  }
-
-  const me = (await meRes.json()) as { id: string };
-
-  const playlistRes = await fetch(`${SPOTIFY_API}/users/${me.id}/playlists`, {
+  // Dev Mode (2026): POST /me/playlists. Legacy: POST /users/{id}/playlists.
+  let playlistRes = await fetch(`${SPOTIFY_API}/me/playlists`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${options.accessToken}`,
@@ -715,6 +781,30 @@ export async function createSpotifyPlaylist(options: {
       public: false,
     }),
   });
+
+  if (!playlistRes.ok && [404, 405, 410].includes(playlistRes.status)) {
+    const meRes = await fetch(`${SPOTIFY_API}/me`, {
+      headers: { Authorization: `Bearer ${options.accessToken}` },
+      cache: "no-store",
+    });
+    if (!meRes.ok) {
+      console.error("Spotify me error", await meRes.text());
+      return null;
+    }
+    const me = (await meRes.json()) as { id: string };
+    playlistRes = await fetch(`${SPOTIFY_API}/users/${me.id}/playlists`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${options.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: options.name,
+        description: options.description,
+        public: false,
+      }),
+    });
+  }
 
   if (!playlistRes.ok) {
     console.error("Spotify create playlist error", await playlistRes.text());
