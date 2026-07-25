@@ -10,7 +10,7 @@
 #   NEXT_PUBLIC_APP_URL      = https://<your-service>.onrender.com
 #   SPOTIFY_CLIENT_ID        = from Spotify Dashboard
 #   SPOTIFY_CLIENT_SECRET    = from Spotify Dashboard
-#   ROOM_ACCESS_PASSWORD     = password to create/join rooms (optional; app has a default)
+#   ROOM_ACCESS_PASSWORD     = password to create rooms (optional; app has a default)
 # DATABASE_URL is wired automatically from okaylist-db.
 
 databases:
